@@ -1,0 +1,72 @@
+# --- Archivos del sistema ---
+.DS_Store
+Thumbs.db
+
+# --- Entornos virtuales ---
+venv/
+.env/
+.env.local
+.env.*.local
+
+# --- Archivos de configuración sensibles ---
+*.env
+*.key
+*.pem
+*.crt
+*.cert
+*.json
+
+# --- Archivos de base de datos y logs ---
+*.db
+*.sqlite3
+*.log
+logs/
+__pycache__/
+
+# --- Carpeta de compilaciones y dependencias ---
+build/
+dist/
+*.egg-info/
+
+# --- Archivos temporales ---
+*.tmp
+*.bak
+*.swp
+*.pid
+
+# --- Archivos específicos de Raspberry Pi ---
+*.img
+*.bin
+*.pyc
+
+# --- Node.js (por si el frontend usa React/Vue/etc) ---
+node_modules/
+npm-debug.log
+yarn-error.log
+build/
+dist/
+
+# --- Archivos de IDE ---
+.vscode/
+.idea/
+*.code-workspace
+
+# --- Archivos multimedia pesados ---
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+videos/
+images/
+media/
+captures/
+
+# --- Archivos de cámaras y DVR ---
+recordings/
+dvr/
+backups/
+storage/
