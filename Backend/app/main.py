@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Response
 from app.db import get_conn
 
-# Routers
+# --- Routers ---
 from app.routes.stations import router as stations_router
 from app.routes.subirphotos import router as subirphotos_router
-# (si después agregás más routers, importalos y sumalos acá)
+from app.routes.access import router as access_router
+from app.routes.plc import router as plc_router
+from app.routes.dispatch import router as dispatch_router
 
 APP_VERSION = "0.1.0"
 
@@ -41,3 +43,6 @@ def root_head():
 # --- Registrar routers ---
 app.include_router(stations_router)
 app.include_router(subirphotos_router)
+app.include_router(access_router)
+app.include_router(plc_router)
+app.include_router(dispatch_router)
