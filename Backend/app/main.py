@@ -1,48 +1,38 @@
-from fastapi import FastAPI, Response
-from app.db import get_conn
+import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from psycopg.errors import Error as PsyError
 
-# --- Routers ---
-from app.routes.stations import router as stations_router
-from app.routes.subirphotos import router as subirphotos_router
-from app.routes.access import router as access_router
-from app.routes.plc import router as plc_router
-from app.routes.dispatch import router as dispatch_router
+# Routers nuevos
+from app.routes.hik import router as hik_router
+from app.routes.water import router as water_router
+from app.routes.company import router as company_router
 
-APP_VERSION = "0.1.0"
+app = FastAPI(title="DIRAC Access & Water API")
 
-app = FastAPI(title="Cargadero PIN API", version=APP_VERSION)
+# CORS amplio para pruebas
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- Health checks ---
-@app.get("/health", include_in_schema=False)
-def health():
-    """Verifica que la API esté viva."""
-    return {"ok": True}
-
-@app.get("/health/db", include_in_schema=False)
-def health_db():
-    """Verifica la conexión a la base de datos."""
+@app.get("/health")
+async def health():
+    # ping simple a DB (sin importar pool aquí; los routers usan el pool)
     try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            cur.fetchone()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+        from app.db import pool
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT 1")
+                row = await cur.fetchone()
+                return {"ok": True, "db": (row and row[0] == 1)}
+    except PsyError as e:
+        return {"ok": False, "db": False, "error": str(e)}
 
-# --- Rutas base ---
-@app.get("/", include_in_schema=False)
-def root():
-    """Endpoint raíz, usado por Render y monitoreo."""
-    return {"app": "Cargadero PIN API", "version": APP_VERSION, "status": "running"}
-
-@app.head("/", include_in_schema=False)
-def root_head():
-    """Render hace HEAD / para health-check, así evitamos 405."""
-    return Response(status_code=200)
-
-# --- Registrar routers ---
-app.include_router(stations_router)
-app.include_router(subirphotos_router)
-app.include_router(access_router)
-app.include_router(plc_router)
-app.include_router(dispatch_router)
+# Montar routers
+app.include_router(hik_router, prefix="/access/hik", tags=["hik"])
+app.include_router(water_router, prefix="/water", tags=["water"])
+app.include_router(company_router, prefix="/company", tags=["company"])
