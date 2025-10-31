@@ -3,10 +3,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import Error as PsyError
 
-# Routers nuevos
+# Routers existentes
 from app.routes.hik import router as hik_router
 from app.routes.water import router as water_router
 from app.routes.company import router as company_router
+
+# Nuevo router (sync de usuarios Hikvision desde company)
+from app.routes.company_sync import router as company_sync_router  # <- NUEVO
 
 app = FastAPI(title="DIRAC Access & Water API")
 
@@ -21,7 +24,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    # ping simple a DB (sin importar pool aquí; los routers usan el pool)
+    # ping simple a DB
     try:
         from app.db import pool
         async with pool.connection() as conn:
@@ -36,3 +39,4 @@ async def health():
 app.include_router(hik_router, prefix="/access/hik", tags=["hik"])
 app.include_router(water_router, prefix="/water", tags=["water"])
 app.include_router(company_router, prefix="/company", tags=["company"])
+app.include_router(company_sync_router, prefix="/company", tags=["company"])  # <- NUEVO
