@@ -1,6 +1,8 @@
+# requirements.txt
 fastapi
 uvicorn
 psycopg[binary]
 psycopg_pool
 xmltodict
 python-multipart
+httpx
