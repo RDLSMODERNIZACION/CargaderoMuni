@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/fotos/media", tags=["fotos"])
 
-# ===== ENV =====
+# ===== ENV (adaptado a tus variables reales) =====
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "cargadero")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE", "")
+SUPABASE_BUCKET = os.getenv("STORAGE_BUCKET", "cargadero")
 
 # ===== Helpers =====
 def public_url(object_path: str) -> str:
