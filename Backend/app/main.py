@@ -11,6 +11,9 @@ from app.routes.company import router as company_router
 # Nuevo router (sync de usuarios Hikvision desde company)
 from app.routes.company_sync import router as company_sync_router  # <- NUEVO
 
+# ✅ NUEVO: router de fotos (upload a Supabase Storage)
+from app.routes.fotos.media import router as fotos_media_router  # <- NUEVO
+
 app = FastAPI(title="DIRAC Access & Water API")
 
 # CORS amplio para pruebas
@@ -40,3 +43,7 @@ app.include_router(hik_router, prefix="/access/hik", tags=["hik"])
 app.include_router(water_router, prefix="/water", tags=["water"])
 app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(company_sync_router, prefix="/company", tags=["company"])  # <- NUEVO
+
+# ✅ NUEVO: upload de fotos
+# Endpoint: POST /fotos/media/upload
+app.include_router(fotos_media_router)
