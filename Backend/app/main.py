@@ -18,6 +18,9 @@ from app.routes.fotos.media import router as fotos_media_router  # <- NUEVO
 # ✅ NUEVO: stations
 from app.routes.stations import router as stations_router  # <- NUEVO
 
+# ✅ NUEVO: KPI
+from app.routes.kpi import router as kpi_router  # <- NUEVO
+
 app = FastAPI(title="DIRAC Access & Water API")
 
 # CORS amplio para pruebas (sin cambios)
@@ -50,6 +53,9 @@ app.include_router(company_sync_router, prefix="/company", tags=["company"])  # 
 
 # ✅ NUEVO: estaciones
 app.include_router(stations_router, tags=["stations"])  # /stations
+
+# ✅ NUEVO: KPI (prefijo definido en el router: /kpi)
+app.include_router(kpi_router)
 
 # ✅ NUEVO: upload de fotos
 # Endpoint: POST /fotos/media/upload
