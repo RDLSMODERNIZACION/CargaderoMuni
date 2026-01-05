@@ -254,3 +254,69 @@ async def recent(station_id: str, limit: int = 20):
                     }
                 )
             return {"ok": True, "items": out}
+
+
+# =========================
+# ATTACH PHOTO TO EXISTING DISPATCH
+# =========================
+@router.post("/dispatch/{dispatch_id}/photo")
+async def attach_photo(dispatch_id: int, request: Request):
+    """
+    Adjunta/actualiza la foto (camión) para un despacho EXISTENTE.
+    - Espera multipart/form-data con:
+        file (jpg/png) [required]
+        suffix (optional, default "truck")
+    - Sube a Supabase Storage y actualiza water_dispatch.photo_path
+    """
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" not in ct:
+        raise HTTPException(status_code=415, detail="Expected multipart/form-data")
+
+    form = await request.form()
+    suffix = (form.get("suffix") or "truck").strip()
+
+    file_obj = form.get("file")
+    if file_obj is None or not hasattr(file_obj, "read"):
+        raise HTTPException(status_code=422, detail="file is required (multipart)")
+
+    upload: UploadFile = file_obj  # type: ignore
+    content_type = (upload.content_type or "").lower()
+    if content_type not in ("image/jpeg", "image/jpg", "image/png"):
+        raise HTTPException(status_code=415, detail=f"Unsupported content-type: {upload.content_type}")
+
+    data = await upload.read()
+    if not data or len(data) < 1000:
+        raise HTTPException(status_code=400, detail="File empty or too small")
+
+    # buscar station_id del dispatch
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT station_id FROM public.water_dispatch WHERE id=%s", (dispatch_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="dispatch not found")
+            station_id = (row[0] or "UNKNOWN")
+
+    ext = ".png" if content_type == "image/png" else ".jpg"
+    ts = int(time.time())
+    safe_station = str(station_id).upper().replace(" ", "_")
+    object_path = f"photos/dispatch_{safe_station}/{suffix}_{ts}_{uuid.uuid4().hex[:8]}{ext}"
+
+    public_url = await _upload_bytes_to_supabase(
+        data=data,
+        content_type=content_type,
+        object_path=object_path,
+    )
+
+    # update photo_path
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE public.water_dispatch SET photo_path=%s WHERE id=%s RETURNING id",
+                (public_url, dispatch_id),
+            )
+            r = await cur.fetchone()
+            if not r:
+                raise HTTPException(status_code=404, detail="dispatch not found")
+
+    return JSONResponse({"ok": True, "dispatch_id": dispatch_id, "photo_path": public_url})

@@ -1,22 +1,32 @@
-import os, json, datetime
+from __future__ import annotations
+
+import os
+import json
+import datetime
 from typing import Any, Dict, Optional
 
+import httpx
+import xmltodict
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
-import xmltodict
 
 from app.db import pool
 
 router = APIRouter()
 
-STATION_ID = os.getenv("STATION_ID", "PALACIO")          # 1 estación = 1 teclado
-WEBHOOK_TOKEN = os.getenv("HIK_WEBHOOK_TOKEN", None)     # opcional
+# =========================
+# ENV
+# =========================
+# fallback si el evento no trae station_id (por ahora)
+DEFAULT_STATION_ID = os.getenv("STATION_ID", "PALACIO")
 
-def _auth_ok(req: Request) -> bool:
-    if not WEBHOOK_TOKEN:
-        return True
-    return req.headers.get("authorization") == f"Bearer {WEBHOOK_TOKEN}"
+# webhook de Node-RED (sin seguridad por ahora)
+NODE_RED_DISPATCH_WEBHOOK = os.getenv("NODE_RED_DISPATCH_WEBHOOK", "")  # ej: http://IP:1880/hik/dispatch_started
 
+
+# =========================
+# Helpers
+# =========================
 def _to_int(x) -> Optional[int]:
     try:
         if x is None or x == "":
@@ -24,6 +34,7 @@ def _to_int(x) -> Optional[int]:
         return int(x)
     except Exception:
         return None
+
 
 def _parse_ts(s: Optional[str]) -> datetime.datetime:
     if not s:
@@ -33,11 +44,48 @@ def _parse_ts(s: Optional[str]) -> datetime.datetime:
     except Exception:
         return datetime.datetime.now(datetime.timezone.utc)
 
+
+def _pick_station_id(root: Dict[str, Any], acs: Dict[str, Any]) -> str:
+    """
+    Intenta sacar station_id del payload (si existe). Si no hay, usa DEFAULT_STATION_ID.
+
+    En el futuro esto lo podés mapear por:
+      - source_ip
+      - device_serial
+      - device_id
+      - etc.
+    """
+    # si Hik manda algún campo identificador (depende el modelo/config)
+    for key in ("stationId", "deviceId", "deviceID", "terminalNo", "terminalId", "devIndex"):
+        v = acs.get(key) or root.get(key)
+        if v:
+            return str(v).strip()
+    return DEFAULT_STATION_ID
+
+
+async def _notify_node_red_dispatch_started(payload: Dict[str, Any]) -> None:
+    """
+    Best-effort: si Node-RED está caído, NO rompemos nada.
+    Sin seguridad por ahora.
+    """
+    if not NODE_RED_DISPATCH_WEBHOOK:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(NODE_RED_DISPATCH_WEBHOOK, json=payload)
+    except Exception:
+        return
+
+
+# =========================
+# Normalización Hik
+# =========================
 def normalize_hik_event(data: Dict[str, Any]) -> Dict[str, Any]:
     root = data.get("EventNotificationAlert") or data
     acs = root.get("AcsEvent", {}) or {}
 
     ts = _parse_ts(root.get("dateTime") or root.get("eventTime") or acs.get("absTime"))
+    station_id = _pick_station_id(root, acs)
 
     status_str = (acs.get("statusString") or "").lower()
     error_code = (acs.get("errorCode") or "")
@@ -52,6 +100,7 @@ def normalize_hik_event(data: Dict[str, Any]) -> Dict[str, Any]:
         granted = False
 
     return {
+        "station_id": station_id,
         "ts": ts,
         "result": root.get("eventType") or acs.get("eventType") or "unknown",
         "reason": acs.get("errorCode") or acs.get("currentVerifyMode") or "",
@@ -67,6 +116,10 @@ def normalize_hik_event(data: Dict[str, Any]) -> Dict[str, Any]:
         "raw": root,
     }
 
+
+# =========================
+# DB writes
+# =========================
 async def insert_access_event(ev: Dict[str, Any]) -> int:
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -81,53 +134,78 @@ async def insert_access_event(ev: Dict[str, Any]) -> int:
                 RETURNING id
                 """,
                 (
-                    STATION_ID, ev["ts"], ev["granted"], ev["result"], ev["reason"],
-                    ev["door_index"], ev["reader_index"], ev["person_id"], ev["person_name"],
-                    ev["credential_type"], ev["credential_value"], ev["direction"],
-                    ev["pic_url"], json.dumps(ev["raw"]),
+                    ev["station_id"],
+                    ev["ts"],
+                    ev["granted"],
+                    ev["result"],
+                    ev["reason"],
+                    ev["door_index"],
+                    ev["reader_index"],
+                    ev["person_id"],
+                    ev["person_name"],
+                    ev["credential_type"],
+                    ev["credential_value"],
+                    ev["direction"],
+                    ev["pic_url"],
+                    json.dumps(ev["raw"]),
                 ),
             )
             row = await cur.fetchone()
             return int(row[0])
 
-async def maybe_start_dispatch(ev: Dict[str, Any]) -> Optional[int]:
-    verify_mode = ev.get("credential_type", "")
-    employee_no = (ev.get("person_id") or "").strip()
-    if not ev.get("granted") or not employee_no:
+
+async def maybe_start_dispatch(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    verify_mode = (ev.get("credential_type") or "").lower()
+    company_code = (ev.get("person_id") or "").strip()
+    station_id = ev.get("station_id") or DEFAULT_STATION_ID
+
+    if not ev.get("granted") or not company_code:
         return None
     if "password" not in verify_mode:
         return None
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            # buscar empresa por code
             await cur.execute(
-                "SELECT id FROM public.company WHERE code=%s AND active",
-                (employee_no,),
+                "SELECT id, name FROM public.company WHERE code=%s AND active",
+                (company_code,),
             )
             r = await cur.fetchone()
             if not r:
                 return None
-            company_id = int(r[0])
 
+            company_id = int(r[0])
+            company_name = r[1]
+
+            # si Hik provee picUrl lo guardamos, pero luego Node-RED lo reemplaza con foto camión
             photo_path = ev.get("pic_url") or None
 
             await cur.execute(
                 """
                 INSERT INTO public.water_dispatch (station_id, company_id, photo_path, note)
                 VALUES (%s, %s, %s, 'despacho iniciado por PIN')
-                RETURNING id
+                RETURNING id, ts
                 """,
-                (STATION_ID, company_id, photo_path),
+                (station_id, company_id, photo_path),
             )
             row = await cur.fetchone()
-            return int(row[0])
+            dispatch_id = int(row[0])
+            ts = row[1]
 
+    return {
+        "dispatch_id": dispatch_id,
+        "station_id": station_id,
+        "company_code": company_code,
+        "company_name": company_name,
+        "ts": ts.isoformat() if ts else None,
+    }
+
+
+# =========================
+# Routes
+# =========================
 @router.post("/webhook")
 async def webhook(request: Request):
-    if not _auth_ok(request):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
     body = await request.body()
     if not body:
         raise HTTPException(status_code=400, detail="Empty body")
@@ -142,14 +220,31 @@ async def webhook(request: Request):
         raise HTTPException(status_code=400, detail=f"Cannot parse payload: {e}")
 
     ev = normalize_hik_event(data)
-    event_id = await insert_access_event(ev)
-    dispatch_id = await maybe_start_dispatch(ev)
-    return JSONResponse({"ok": True, "event_id": event_id, "dispatch_id": dispatch_id})
 
-# Endpoint de prueba con JSON ya-normalizado (para Postman/curl)
+    event_id = await insert_access_event(ev)
+    dispatch_info = await maybe_start_dispatch(ev)
+
+    if dispatch_info:
+        await _notify_node_red_dispatch_started(
+            {
+                "event_id": event_id,
+                "dispatch_id": dispatch_info["dispatch_id"],
+                "station_id": dispatch_info["station_id"],
+                "company_code": dispatch_info["company_code"],
+                "company_name": dispatch_info["company_name"],
+                "ts": dispatch_info["ts"],
+            }
+        )
+
+    return JSONResponse(
+        {"ok": True, "event_id": event_id, "dispatch_id": dispatch_info["dispatch_id"] if dispatch_info else None}
+    )
+
+
 @router.post("/test")
 async def test_event(payload: Dict[str, Any]):
     ev = {
+        "station_id": payload.get("station_id") or DEFAULT_STATION_ID,
         "ts": datetime.datetime.now(datetime.timezone.utc),
         "result": payload.get("eventType", "AccessControl"),
         "reason": payload.get("currentVerifyMode", "password"),
@@ -164,6 +259,20 @@ async def test_event(payload: Dict[str, Any]):
         "granted": True,
         "raw": payload,
     }
+
     event_id = await insert_access_event(ev)
-    dispatch_id = await maybe_start_dispatch(ev)
-    return {"ok": True, "event_id": event_id, "dispatch_id": dispatch_id}
+    dispatch_info = await maybe_start_dispatch(ev)
+
+    if dispatch_info:
+        await _notify_node_red_dispatch_started(
+            {
+                "event_id": event_id,
+                "dispatch_id": dispatch_info["dispatch_id"],
+                "station_id": dispatch_info["station_id"],
+                "company_code": dispatch_info["company_code"],
+                "company_name": dispatch_info["company_name"],
+                "ts": dispatch_info["ts"],
+            }
+        )
+
+    return {"ok": True, "event_id": event_id, "dispatch_id": dispatch_info["dispatch_id"] if dispatch_info else None}
