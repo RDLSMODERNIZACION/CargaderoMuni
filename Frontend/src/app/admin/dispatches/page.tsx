@@ -8,6 +8,7 @@ import { apiJSON } from "../../../lib/api/api";
 const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
 const Drawer = dynamic(() => import("../../../components/Drawer"), { ssr: false }) as any;
 const Tabs = dynamic(() => import("../../../components/Tabs"), { ssr: false }) as any;
+// ✅ lo seguimos importando pero ya NO dependemos de que PhotoGallery esté perfecto
 const PhotoGallery = dynamic(() => import("../../../components/PhotoGallery"), { ssr: false }) as any;
 
 type Column<T> = any;
@@ -16,16 +17,32 @@ type DispatchItem = {
   id: number;
   ts: string;
   station_id: string;
-  liters: number;
+  liters: number | null;
+  flow_l_min?: number | null;
   photo_path?: string | null;
   note?: string | null;
+
   company_id?: number | null;
-  company?: string | null;
+  company_name?: string | null;
   company_code?: string | null;
 };
 
 type Station = { id: string; name?: string | null; active: boolean };
 type Photo = { id: string; url: string; ts?: string };
+
+function norm(s?: string | null) {
+  return (s ?? "").trim().toLowerCase();
+}
+
+function safeFileNameFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop() || "foto.jpg";
+    return decodeURIComponent(last);
+  } catch {
+    return "foto.jpg";
+  }
+}
 
 export default function DispatchesPage() {
   const [mounted, setMounted] = useState(false);
@@ -36,6 +53,7 @@ export default function DispatchesPage() {
 
   // ✅ filtros
   const [qStation, setQStation] = useState<string>(""); // "" = Todas
+  const [qCompany, setQCompany] = useState<string>(""); // "" = Todas
   const [from, setFrom] = useState<string>("");
   const [to, setTo] = useState<string>("");
 
@@ -44,10 +62,7 @@ export default function DispatchesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const selected = useMemo(
-    () => rows.find((r) => r.id === selectedId) || null,
-    [rows, selectedId]
-  );
+  const selected = useMemo(() => rows.find((r) => r.id === selectedId) || null, [rows, selectedId]);
 
   useEffect(() => {
     if (selectedId != null && !selected) setSelectedId(null);
@@ -61,8 +76,34 @@ export default function DispatchesPage() {
 
   const selectedPhotos: Photo[] = useMemo(() => {
     if (!selected?.photo_path) return [];
-    return [{ id: String(selected.id), url: selected.photo_path, ts: selected.ts }];
+    // ✅ agrego cache-bust suave por si supabase/CDN tarda en actualizar o el browser cachea
+    const url = selected.photo_path.includes("?")
+      ? `${selected.photo_path}&v=${selected.id}`
+      : `${selected.photo_path}?v=${selected.id}`;
+    return [{ id: String(selected.id), url, ts: selected.ts }];
   }, [selected]);
+
+  // ✅ opciones de empresa detectadas desde los propios despachos
+  const companyOptions = useMemo(() => {
+    const m = new Map<string, { id: number; label: string }>();
+    for (const r of rows) {
+      if (r.company_id == null) continue;
+      const key = String(r.company_id);
+      if (!m.has(key)) {
+        m.set(key, {
+          id: r.company_id,
+          label: r.company_name || r.company_code || `#${r.company_id}`,
+        });
+      } else {
+        const cur = m.get(key)!;
+        const better = r.company_name || r.company_code;
+        if (better && (cur.label.startsWith("#") || cur.label === String(cur.id))) cur.label = better;
+      }
+    }
+    const arr = Array.from(m.values());
+    arr.sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
+    return arr;
+  }, [rows]);
 
   async function loadStations() {
     setLoadingMeta(true);
@@ -80,43 +121,17 @@ export default function DispatchesPage() {
   async function loadDispatches() {
     setLoadingRows(true);
     setError(null);
+
     try {
       const qs = new URLSearchParams();
       qs.set("limit", "200");
 
-      // ✅ si hay estación seleccionada, el backend la requiere → enviamos station_id
-      // ✅ si es "Todas", probamos sin station_id; si el backend exige station_id y devuelve 422, hacemos fallback
       if (qStation) qs.set("station_id", qStation);
+      if (qCompany) qs.set("company_id", qCompany);
 
-      try {
-        const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(
-          `/water/dispatch/recent?${qs.toString()}`
-        );
-        setRows(Array.isArray(res?.items) ? res.items : []);
-      } catch (e: any) {
-        // ✅ fallback: si el backend exige station_id (422) y estamos en "Todas",
-        // traemos y unimos por estación
-        const msg = String(e?.message ?? "");
-        if (!qStation && msg.includes("422")) {
-          const all = await Promise.all(
-            stations.map(async (s) => {
-              const qs2 = new URLSearchParams();
-              qs2.set("station_id", s.id);
-              qs2.set("limit", "200");
-              const r2 = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(
-                `/water/dispatch/recent?${qs2.toString()}`
-              );
-              return Array.isArray(r2?.items) ? r2.items : [];
-            })
-          );
-          const merged = all.flat();
-          // ordenar por fecha desc
-          merged.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-          setRows(merged);
-        } else {
-          throw e;
-        }
-      }
+      const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(`/water/dispatch/recent?${qs.toString()}`);
+
+      setRows(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
       setError(e?.message ?? "Error cargando despachos");
       setRows([]);
@@ -128,26 +143,26 @@ export default function DispatchesPage() {
   useEffect(() => {
     if (!mounted) return;
     loadStations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted]);
 
   useEffect(() => {
     if (!mounted) return;
-    // cuando cambian estaciones (meta) o filtro de estación, recargar
-    // (stations se usa para el fallback “todas”)
     loadDispatches();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, qStation, stations.length]);
+  }, [mounted, qStation, qCompany, stations.length]);
 
+  // ✅ filtro por fechas + empresa del lado front (aunque el backend no lo soporte)
   const filtered = useMemo(() => {
     const start = from ? new Date(from).getTime() : -Infinity;
     const end = to ? new Date(to).getTime() : Infinity;
+    const companyId = qCompany ? Number(qCompany) : null;
 
     return rows.filter((d) => {
       const dt = d.ts ? new Date(d.ts).getTime() : 0;
-      return dt >= start && dt <= end;
+      if (!(dt >= start && dt <= end)) return false;
+      if (companyId != null && (d.company_id ?? null) !== companyId) return false;
+      return true;
     });
-  }, [rows, from, to]);
+  }, [rows, from, to, qCompany]);
 
   const columns: Column<DispatchItem>[] = [
     { key: "id", header: "ID", width: "80px" },
@@ -159,7 +174,7 @@ export default function DispatchesPage() {
     {
       key: "company",
       header: "Empresa",
-      render: (r: DispatchItem) => r.company || r.company_code || "—",
+      render: (r: DispatchItem) => r.company_name || r.company_code || "—",
     },
     {
       key: "liters",
@@ -171,8 +186,7 @@ export default function DispatchesPage() {
       key: "ts",
       header: "Fecha",
       render: (r: DispatchItem) => (r.ts ? fmtDate(r.ts) : "—"),
-      sort: (a: DispatchItem, b: DispatchItem) =>
-        new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+      sort: (a: DispatchItem, b: DispatchItem) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
     },
     {
       key: "photo",
@@ -195,13 +209,11 @@ export default function DispatchesPage() {
       </header>
 
       {error && (
-        <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">
-          {error}
-        </div>
+        <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">{error}</div>
       )}
 
       <section className="card">
-        <div className="grid md:grid-cols-4 gap-3">
+        <div className="grid md:grid-cols-5 gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Estación</label>
             <select className="select" value={qStation} onChange={(e) => setQStation(e.target.value)}>
@@ -209,6 +221,18 @@ export default function DispatchesPage() {
               {stations.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name || s.id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Empresa</label>
+            <select className="select" value={qCompany} onChange={(e) => setQCompany(e.target.value)}>
+              <option value="">Todas</option>
+              {companyOptions.map((c) => (
+                <option key={c.id} value={String(c.id)}>
+                  {c.label}
                 </option>
               ))}
             </select>
@@ -224,10 +248,19 @@ export default function DispatchesPage() {
             <input type="datetime-local" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
 
-          <div className="flex items-end">
-            <div className="text-xs text-slate-500">
-              {qStation ? `Filtrando por: ${qStation}` : "Mostrando: Todas"}
-            </div>
+          <div className="flex items-end justify-end">
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setQStation("");
+                setQCompany("");
+                setFrom("");
+                setTo("");
+              }}
+              disabled={loading}
+            >
+              Limpiar
+            </button>
           </div>
         </div>
       </section>
@@ -264,10 +297,7 @@ export default function DispatchesPage() {
                       <b>Fecha:</b> {selected.ts ? fmtDate(selected.ts) : "—"}
                     </div>
                     <div>
-                      <b>Empresa:</b> {selected.company || "—"}
-                    </div>
-                    <div>
-                      <b>Código:</b> {selected.company_code || "—"}
+                      <b>Empresa:</b> {selected.company_name || selected.company_code || "—"}
                     </div>
                     <div>
                       <b>Litros:</b> {fmtLiters(selected.liters ?? 0)}
@@ -278,6 +308,52 @@ export default function DispatchesPage() {
                     <div>
                       <b>Foto:</b> {selected.photo_path ? "Sí" : "No"}
                     </div>
+
+                    {/* ✅ Preview directo “bien” (no depende de PhotoGallery) */}
+                    {selected.photo_path && (
+                      <div className="pt-2">
+                        <div className="text-xs text-slate-500 mb-1">Vista previa</div>
+                        <a
+                          href={selected.photo_path}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-block w-full"
+                          title="Abrir en nueva pestaña"
+                        >
+                          <img
+                            src={
+                              selected.photo_path.includes("?")
+                                ? `${selected.photo_path}&v=${selected.id}`
+                                : `${selected.photo_path}?v=${selected.id}`
+                            }
+                            alt={`Foto despacho ${selected.id}`}
+                            className="w-full max-h-[55vh] object-contain rounded-lg border bg-white"
+                            loading="lazy"
+                            onError={(e) => {
+                              // si falla la carga, ocultamos el img para que no quede roto
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        </a>
+                        <div className="mt-2 flex items-center gap-2">
+                          <a
+                            href={selected.photo_path}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn btn-secondary"
+                          >
+                            Abrir
+                          </a>
+                          <a
+                            href={selected.photo_path}
+                            download={safeFileNameFromUrl(selected.photo_path)}
+                            className="btn btn-secondary"
+                          >
+                            Descargar
+                          </a>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ),
               },
@@ -291,7 +367,12 @@ export default function DispatchesPage() {
                 ),
                 content: (
                   <div className="card">
-                    <PhotoGallery photos={selectedPhotos as any} />
+                    {/* ✅ mantenemos PhotoGallery, pero si no anda, igual el preview de Resumen ya te salva */}
+                    {selected.photo_path ? (
+                      <PhotoGallery photos={selectedPhotos as any} />
+                    ) : (
+                      <div className="text-sm text-slate-500">Sin foto</div>
+                    )}
                   </div>
                 ),
               },
