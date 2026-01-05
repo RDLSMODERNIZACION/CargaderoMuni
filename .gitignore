@@ -1,71 +1,82 @@
-# --- Archivos del sistema ---
+# ===============================
+# Sistema operativo
+# ===============================
 .DS_Store
 Thumbs.db
 
-# --- Entornos virtuales ---
-venv/
-.env/
+# ===============================
+# Variables de entorno (sensibles)
+# ===============================
+.env
+.env.*
 .env.local
 .env.*.local
 
-# --- Archivos de configuración sensibles ---
-*.env
+# ===============================
+# Certificados / claves (sensibles)
+# ===============================
 *.key
 *.pem
 *.crt
 *.cert
-*.json
 
-# --- Archivos de base de datos y logs ---
-*.db
-*.sqlite3
+# ===============================
+# Python / Backend
+# ===============================
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===============================
+# Logs y temporales
+# ===============================
 *.log
 logs/
-__pycache__/
-
-# --- Carpeta de compilaciones y dependencias ---
-build/
-dist/
-*.egg-info/
-
-# --- Archivos temporales ---
 *.tmp
 *.bak
 *.swp
 *.pid
 
-# --- Archivos específicos de Raspberry Pi ---
-*.img
-*.bin
-*.pyc
-
-# --- Node.js (por si el frontend usa React/Vue/etc) ---
-node_modules/
-npm-debug.log
-yarn-error.log
+# ===============================
+# Builds / compilados
+# ===============================
 build/
 dist/
+*.egg-info/
 
-# --- Archivos de IDE ---
+# ===============================
+# Node / Next.js / Frontend
+# ===============================
+node_modules/
+.next/
+.vercel/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===============================
+# IDEs / Editores
+# ===============================
 .vscode/
 .idea/
 *.code-workspace
 
-# --- Archivos multimedia pesados ---
+# ===============================
+# Multimedia / archivos pesados
+# ===============================
 *.mp4
 *.avi
 *.mov
 *.mkv
-*.jpg
-*.jpeg
-*.png
-*.gif
 videos/
-images/
 media/
 captures/
 
-# --- Archivos de cámaras y DVR ---
+# ===============================
+# Cámaras / DVR
+# ===============================
 recordings/
 dvr/
 backups/
