@@ -8,8 +8,6 @@ import { apiJSON } from "../../../lib/api/api";
 const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
 const Drawer = dynamic(() => import("../../../components/Drawer"), { ssr: false }) as any;
 const Tabs = dynamic(() => import("../../../components/Tabs"), { ssr: false }) as any;
-// ✅ lo seguimos importando pero ya NO dependemos de que PhotoGallery esté perfecto
-const PhotoGallery = dynamic(() => import("../../../components/PhotoGallery"), { ssr: false }) as any;
 
 type Column<T> = any;
 
@@ -28,7 +26,6 @@ type DispatchItem = {
 };
 
 type Station = { id: string; name?: string | null; active: boolean };
-type Photo = { id: string; url: string; ts?: string };
 
 function norm(s?: string | null) {
   return (s ?? "").trim().toLowerCase();
@@ -73,15 +70,6 @@ export default function DispatchesPage() {
     stations.forEach((s) => m.set(s.id, s.name || s.id));
     return m;
   }, [stations]);
-
-  const selectedPhotos: Photo[] = useMemo(() => {
-    if (!selected?.photo_path) return [];
-    // ✅ agrego cache-bust suave por si supabase/CDN tarda en actualizar o el browser cachea
-    const url = selected.photo_path.includes("?")
-      ? `${selected.photo_path}&v=${selected.id}`
-      : `${selected.photo_path}?v=${selected.id}`;
-    return [{ id: String(selected.id), url, ts: selected.ts }];
-  }, [selected]);
 
   // ✅ opciones de empresa detectadas desde los propios despachos
   const companyOptions = useMemo(() => {
@@ -130,7 +118,6 @@ export default function DispatchesPage() {
       if (qCompany) qs.set("company_id", qCompany);
 
       const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(`/water/dispatch/recent?${qs.toString()}`);
-
       setRows(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
       setError(e?.message ?? "Error cargando despachos");
@@ -150,7 +137,6 @@ export default function DispatchesPage() {
     loadDispatches();
   }, [mounted, qStation, qCompany, stations.length]);
 
-  // ✅ filtro por fechas + empresa del lado front (aunque el backend no lo soporte)
   const filtered = useMemo(() => {
     const start = from ? new Date(from).getTime() : -Infinity;
     const end = to ? new Date(to).getTime() : Infinity;
@@ -196,7 +182,6 @@ export default function DispatchesPage() {
   ];
 
   if (!mounted) return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
-
   const loading = loadingMeta || loadingRows;
 
   return (
@@ -208,9 +193,7 @@ export default function DispatchesPage() {
         </button>
       </header>
 
-      {error && (
-        <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">{error}</div>
-      )}
+      {error && <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">{error}</div>}
 
       <section className="card">
         <div className="grid md:grid-cols-5 gap-3">
@@ -308,11 +291,23 @@ export default function DispatchesPage() {
                     <div>
                       <b>Foto:</b> {selected.photo_path ? "Sí" : "No"}
                     </div>
+                  </div>
+                ),
+              },
+              {
+                key: "fotos",
+                label: "Fotos",
+                badge: (
+                  <span className="badge bg-slate-100 text-slate-700">
+                    {(selected.photo_path ? 1 : 0).toString()}
+                  </span>
+                ),
+                content: (
+                  <div className="space-y-3">
+                    {selected.photo_path ? (
+                      <div className="card">
+                        <div className="text-xs text-slate-500 mb-2">Vista previa</div>
 
-                    {/* ✅ Preview directo “bien” (no depende de PhotoGallery) */}
-                    {selected.photo_path && (
-                      <div className="pt-2">
-                        <div className="text-xs text-slate-500 mb-1">Vista previa</div>
                         <a
                           href={selected.photo_path}
                           target="_blank"
@@ -327,21 +322,16 @@ export default function DispatchesPage() {
                                 : `${selected.photo_path}?v=${selected.id}`
                             }
                             alt={`Foto despacho ${selected.id}`}
-                            className="w-full max-h-[55vh] object-contain rounded-lg border bg-white"
+                            className="w-full max-h-[60vh] object-contain rounded-lg border bg-white"
                             loading="lazy"
                             onError={(e) => {
-                              // si falla la carga, ocultamos el img para que no quede roto
                               (e.currentTarget as HTMLImageElement).style.display = "none";
                             }}
                           />
                         </a>
-                        <div className="mt-2 flex items-center gap-2">
-                          <a
-                            href={selected.photo_path}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-secondary"
-                          >
+
+                        <div className="mt-3 flex items-center gap-2">
+                          <a href={selected.photo_path} target="_blank" rel="noreferrer" className="btn btn-secondary">
                             Abrir
                           </a>
                           <a
@@ -353,25 +343,8 @@ export default function DispatchesPage() {
                           </a>
                         </div>
                       </div>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: "fotos",
-                label: "Fotos",
-                badge: (
-                  <span className="badge bg-slate-100 text-slate-700">
-                    {(selected.photo_path ? 1 : 0).toString()}
-                  </span>
-                ),
-                content: (
-                  <div className="card">
-                    {/* ✅ mantenemos PhotoGallery, pero si no anda, igual el preview de Resumen ya te salva */}
-                    {selected.photo_path ? (
-                      <PhotoGallery photos={selectedPhotos as any} />
                     ) : (
-                      <div className="text-sm text-slate-500">Sin foto</div>
+                      <div className="card text-sm text-slate-500">Sin foto</div>
                     )}
                   </div>
                 ),
