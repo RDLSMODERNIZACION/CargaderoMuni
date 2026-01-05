@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Dispatch } from "../../../lib/types";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
+// ✅ IMPORT CORRECTO (named export)
 import { apiJSON } from "../../../lib/api/api";
 
 // ✅ Cargar componentes “problemáticos” solo en cliente (evita hydration mismatch)
@@ -52,7 +53,10 @@ export default function DispatchesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = useMemo(() => rows.find(r => r.id === selectedId) || null, [rows, selectedId]);
+  const selected = useMemo(
+    () => rows.find((r) => r.id === selectedId) || null,
+    [rows, selectedId]
+  );
 
   useEffect(() => {
     if (selectedId && !selected) setSelectedId(null);
@@ -60,19 +64,19 @@ export default function DispatchesPage() {
 
   const stationNameById = useMemo(() => {
     const m = new Map<string, string>();
-    stations.forEach(s => m.set(s.id, s.name || s.id));
+    stations.forEach((s) => m.set(s.id, s.name || s.id));
     return m;
   }, [stations]);
 
   const userNameByCode = useMemo(() => {
     const m = new Map<string, string>();
-    users.forEach(u => m.set(u.code, u.name || u.code));
+    users.forEach((u) => m.set(u.code, u.name || u.code));
     return m;
   }, [users]);
 
   const plates = useMemo(() => {
     const set = new Set<string>();
-    rows.forEach(d => {
+    rows.forEach((d) => {
       const p = plateOf(d);
       if (p !== "—") set.add(p);
     });
@@ -83,16 +87,19 @@ export default function DispatchesPage() {
     setLoadingMeta(true);
     setError(null);
     try {
+      // ✅ Debug rápido (sacalo después si querés)
+      // console.log("API_BASE", process.env.NEXT_PUBLIC_API_BASE);
+
       const st = await apiJSON<Station[]>("/stations");
-      setStations(st);
+      setStations(Array.isArray(st) ? st : []);
 
       const comp = await apiJSON<{ ok: boolean; items: CompanyItem[] }>("/company");
-      setUsers(comp?.items ?? []);
+      setUsers(Array.isArray(comp?.items) ? comp.items : []);
 
       // default station (si no hay)
-      setQStation(prev => {
+      setQStation((prev) => {
         if (prev) return prev;
-        const firstActive = st.find(x => x.active) ?? st[0];
+        const firstActive = (Array.isArray(st) ? st : []).find((x) => x.active) ?? (Array.isArray(st) ? st : [])[0];
         return firstActive?.id ?? "";
       });
     } catch (e: any) {
@@ -132,7 +139,7 @@ export default function DispatchesPage() {
   }, [mounted, qStation]);
 
   const filtered = useMemo(() => {
-    return rows.filter(d => {
+    return rows.filter((d) => {
       const stationId = (d as any).station_id as string | undefined;
       const companyCode =
         ((d as any).company_code as string | undefined) ??
@@ -273,14 +280,39 @@ export default function DispatchesPage() {
                 label: "Resumen",
                 content: (
                   <div className="space-y-2 text-sm">
-                    <div><b>Estación:</b> {(selected as any).station_name || stationNameById.get((selected as any).station_id) || (selected as any).station_id || "—"}</div>
-                    <div><b>Usuario:</b> {(selected as any).user_name || userNameByCode.get((selected as any).company_code) || (selected as any).company_code || "—"}</div>
-                    <div><b>Patente:</b> <code>{plateOf(selected)}</code></div>
-                    <div><b>Inicio:</b> {(selected as any).started_at ? fmtDate((selected as any).started_at) : "—"}</div>
-                    <div><b>Fin:</b> {(selected as any).ended_at ? fmtDate((selected as any).ended_at) : "—"}</div>
-                    <div><b>Autorizados:</b> {fmtLiters((selected as any).litros_autorizados ?? 0)}</div>
-                    <div><b>Entregados:</b> {fmtLiters((selected as any).litros_entregados ?? 0)}</div>
-                    <div><b>Notas:</b> {(selected as any).notes || "—"}</div>
+                    <div>
+                      <b>Estación:</b>{" "}
+                      {(selected as any).station_name ||
+                        stationNameById.get((selected as any).station_id) ||
+                        (selected as any).station_id ||
+                        "—"}
+                    </div>
+                    <div>
+                      <b>Usuario:</b>{" "}
+                      {(selected as any).user_name ||
+                        userNameByCode.get((selected as any).company_code) ||
+                        (selected as any).company_code ||
+                        "—"}
+                    </div>
+                    <div>
+                      <b>Patente:</b> <code>{plateOf(selected)}</code>
+                    </div>
+                    <div>
+                      <b>Inicio:</b>{" "}
+                      {(selected as any).started_at ? fmtDate((selected as any).started_at) : "—"}
+                    </div>
+                    <div>
+                      <b>Fin:</b> {(selected as any).ended_at ? fmtDate((selected as any).ended_at) : "—"}
+                    </div>
+                    <div>
+                      <b>Autorizados:</b> {fmtLiters((selected as any).litros_autorizados ?? 0)}
+                    </div>
+                    <div>
+                      <b>Entregados:</b> {fmtLiters((selected as any).litros_entregados ?? 0)}
+                    </div>
+                    <div>
+                      <b>Notas:</b> {(selected as any).notes || "—"}
+                    </div>
                   </div>
                 ),
               },
