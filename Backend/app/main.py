@@ -1,3 +1,4 @@
+# app/main.py
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,9 +15,12 @@ from app.routes.company_sync import router as company_sync_router  # <- NUEVO
 # ✅ NUEVO: router de fotos (upload a Supabase Storage)
 from app.routes.fotos.media import router as fotos_media_router  # <- NUEVO
 
+# ✅ NUEVO: stations
+from app.routes.stations import router as stations_router  # <- NUEVO
+
 app = FastAPI(title="DIRAC Access & Water API")
 
-# CORS amplio para pruebas
+# CORS amplio para pruebas (sin cambios)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,6 +47,9 @@ app.include_router(hik_router, prefix="/access/hik", tags=["hik"])
 app.include_router(water_router, prefix="/water", tags=["water"])
 app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(company_sync_router, prefix="/company", tags=["company"])  # <- NUEVO
+
+# ✅ NUEVO: estaciones
+app.include_router(stations_router, tags=["stations"])  # /stations
 
 # ✅ NUEVO: upload de fotos
 # Endpoint: POST /fotos/media/upload
