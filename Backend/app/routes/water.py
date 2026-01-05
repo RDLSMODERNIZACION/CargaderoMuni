@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, HTTPException, UploadFile, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -56,10 +56,10 @@ async def _upload_bytes_to_supabase(*, data: bytes, content_type: str, object_pa
 # Schemas (JSON mode)
 # =========================
 class StartDispatchIn(BaseModel):
-    station_id: str = Field(..., example="PALACIO")
-    company_code: str = Field(..., example="EMP001")
-    photo_path: Optional[str] = Field(None, example="https://storage/snap.jpg")
-    note: Optional[str] = "despacho iniciado manual"
+    station_id: str = Field(..., examples=["PALACIO"])
+    company_code: str = Field(..., examples=["EMP001"])
+    photo_path: Optional[str] = Field(None, examples=["https://storage/snap.jpg"])
+    note: Optional[str] = Field("despacho iniciado manual", examples=["PIN OK + foto camión"])
 
 
 class SetLitersIn(BaseModel):
@@ -94,7 +94,6 @@ async def start_dispatch(request: Request):
     if "multipart/form-data" in ct:
         form = await request.form()
 
-        # required fields
         station_id = (form.get("station_id") or "").strip()
         company_code = (form.get("company_code") or "").strip()
         note = (form.get("note") or "despacho iniciado por trigger").strip()
@@ -159,7 +158,9 @@ async def start_dispatch(request: Request):
                         "ts": row[1].isoformat() if row and row[1] else None,
                         "station_id": station_id,
                         "company_code": company_code,
+                        "company_id": company_id,
                         "photo_path": public_url,
+                        "note": note,
                     }
                 )
 
@@ -197,7 +198,9 @@ async def start_dispatch(request: Request):
                 "ts": row[1].isoformat() if row and row[1] else None,
                 "station_id": payload.station_id,
                 "company_code": payload.company_code,
+                "company_id": company_id,
                 "photo_path": payload.photo_path,
+                "note": payload.note,
             }
 
 
@@ -219,41 +222,71 @@ async def set_liters(dispatch_id: int, body: SetLitersIn):
 
 
 # =========================
-# RECENT
+# RECENT (ACTUALIZADO)
 # =========================
 @router.get("/dispatch/recent")
-async def recent(station_id: str, limit: int = 20):
+async def recent(limit: int = 20, station_id: Optional[str] = None):
+    """
+    Trae despachos recientes.
+    - Si station_id viene: filtra por estación
+    - Si no viene: trae de todas las estaciones (útil para admin)
+
+    Ej:
+      /water/dispatch/recent?limit=200
+      /water/dispatch/recent?station_id=PALACIO&limit=200
+    """
+    limit = max(1, min(int(limit), 500))  # cap razonable
+
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT wd.id, wd.ts, wd.station_id, wd.liters, wd.photo_path, wd.note,
-                       c.id AS company_id, c.name AS company, c.code
-                FROM public.water_dispatch wd
-                LEFT JOIN public.company c ON c.id = wd.company_id
-                WHERE wd.station_id=%s
-                ORDER BY wd.ts DESC
-                LIMIT %s
-                """,
-                (station_id, limit),
-            )
-            rows = await cur.fetchall()
-            out = []
-            for r in rows:
-                out.append(
-                    {
-                        "id": r[0],
-                        "ts": r[1],
-                        "station_id": r[2],
-                        "liters": r[3],
-                        "photo_path": r[4],
-                        "note": r[5],
-                        "company_id": r[6],
-                        "company": r[7],
-                        "company_code": r[8],
-                    }
+            if station_id:
+                await cur.execute(
+                    """
+                    SELECT
+                        wd.id, wd.ts, wd.station_id, wd.liters, wd.flow_l_min, wd.photo_path, wd.note,
+                        c.id AS company_id, c.name AS company_name, c.code AS company_code
+                    FROM public.water_dispatch wd
+                    LEFT JOIN public.company c ON c.id = wd.company_id
+                    WHERE wd.station_id=%s
+                    ORDER BY wd.ts DESC
+                    LIMIT %s
+                    """,
+                    (station_id, limit),
                 )
-            return {"ok": True, "items": out}
+            else:
+                await cur.execute(
+                    """
+                    SELECT
+                        wd.id, wd.ts, wd.station_id, wd.liters, wd.flow_l_min, wd.photo_path, wd.note,
+                        c.id AS company_id, c.name AS company_name, c.code AS company_code
+                    FROM public.water_dispatch wd
+                    LEFT JOIN public.company c ON c.id = wd.company_id
+                    ORDER BY wd.ts DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+
+            rows = await cur.fetchall()
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "id": r[0],
+                "ts": r[1].isoformat() if r[1] else None,
+                "station_id": r[2],
+                "liters": r[3],
+                "flow_l_min": r[4],
+                "photo_path": r[5],
+                "note": r[6],
+                "company_id": r[7],
+                "company_name": r[8],   # ✅ lo que necesitás en el front
+                "company_code": r[9],   # (opcional) dejalo si te sirve
+            }
+        )
+
+    return {"ok": True, "items": items}
 
 
 # =========================
