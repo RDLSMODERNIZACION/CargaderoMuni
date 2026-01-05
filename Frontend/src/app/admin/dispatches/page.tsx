@@ -1,94 +1,203 @@
 "use client";
-import React, { useMemo, useState } from "react";
-import { dispatches as seedDispatches, stations, users } from "../../../data/seed";
+
+import React, { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import type { Dispatch } from "../../../lib/types";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
-import DataTable, { type Column } from "../../../components/DataTable";
-import Drawer from "../../../components/Drawer";
-import PhotoGallery from "../../../components/PhotoGallery";
-import Tabs from "../../../components/Tabs";
+import { apiJSON } from "../../../lib/api/api";
 
-// --- Helpers de patente ---
+// ✅ Cargar componentes “problemáticos” solo en cliente (evita hydration mismatch)
+const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
+const Drawer = dynamic(() => import("../../../components/Drawer"), { ssr: false }) as any;
+const Tabs = dynamic(() => import("../../../components/Tabs"), { ssr: false }) as any;
+const PhotoGallery = dynamic(() => import("../../../components/PhotoGallery"), { ssr: false }) as any;
+
+type Column<T> = any; // para no pelear con types del dynamic
+
 function plateNorm(s: string) {
   return s.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
-// obtiene patente desde snapshot o la extrae de notes (patente: ABC123 / plate: ABC123)
 function plateOf(d: Dispatch): string {
   const snap = (d as any).vehicle_plate_snapshot as string | undefined;
   if (snap && snap.trim()) return plateNorm(snap);
-  if (d.notes) {
-    const m = d.notes.match(/(?:patente|plate)\s*[: ]*([A-Z0-9 -]{5,10})/i);
+  const notes = (d as any).notes as string | undefined;
+  if (notes) {
+    const m = notes.match(/(?:patente|plate)\s*[: ]*([A-Z0-9 -]{5,10})/i);
     if (m?.[1]) return plateNorm(m[1]);
   }
   return "—";
 }
 
+type Station = { id: string; name?: string | null; active: boolean };
+type CompanyItem = { code: string; name?: string | null; active?: boolean };
+
 export default function DispatchesPage() {
-  const NONE = "__NONE__"; // valor especial para "Sin patente"
+  const NONE = "__NONE__";
 
-  const [qStation, setQStation] = useState<string>("");
-  const [qUser, setQUser] = useState<string>("");
-  const [qPlate, setQPlate] = useState<string>(""); // ▼ desplegable de patente
-  const [from, setFrom] = useState<string>("");
-  const [to, setTo] = useState<string>("");
-  const [selected, setSelected] = useState<Dispatch | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  // lista de patentes disponibles (únicas) para el desplegable
+  const [stations, setStations] = useState<Station[]>([]);
+  const [users, setUsers] = useState<CompanyItem[]>([]);
+  const [rows, setRows] = useState<Dispatch[]>([]);
+
+  const [qStation, setQStation] = useState("");
+  const [qUser, setQUser] = useState("");
+  const [qPlate, setQPlate] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  const [loadingMeta, setLoadingMeta] = useState(false);
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = useMemo(() => rows.find(r => r.id === selectedId) || null, [rows, selectedId]);
+
+  useEffect(() => {
+    if (selectedId && !selected) setSelectedId(null);
+  }, [selectedId, selected]);
+
+  const stationNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    stations.forEach(s => m.set(s.id, s.name || s.id));
+    return m;
+  }, [stations]);
+
+  const userNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    users.forEach(u => m.set(u.code, u.name || u.code));
+    return m;
+  }, [users]);
+
   const plates = useMemo(() => {
     const set = new Set<string>();
-    seedDispatches.forEach((d) => {
+    rows.forEach(d => {
       const p = plateOf(d);
       if (p !== "—") set.add(p);
     });
     return Array.from(set).sort();
-  }, []);
+  }, [rows]);
+
+  async function loadMeta() {
+    setLoadingMeta(true);
+    setError(null);
+    try {
+      const st = await apiJSON<Station[]>("/stations");
+      setStations(st);
+
+      const comp = await apiJSON<{ ok: boolean; items: CompanyItem[] }>("/company");
+      setUsers(comp?.items ?? []);
+
+      // default station (si no hay)
+      setQStation(prev => {
+        if (prev) return prev;
+        const firstActive = st.find(x => x.active) ?? st[0];
+        return firstActive?.id ?? "";
+      });
+    } catch (e: any) {
+      setError(e?.message ?? "Error cargando estaciones/usuarios");
+    } finally {
+      setLoadingMeta(false);
+    }
+  }
+
+  async function loadDispatches() {
+    setLoadingRows(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams();
+      if (qStation) qs.set("station_id", qStation);
+      qs.set("limit", "200");
+
+      const data = await apiJSON<Dispatch[]>(`/water/dispatch/recent?${qs.toString()}`);
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setError(e?.message ?? "Error cargando despachos");
+      setRows([]);
+    } finally {
+      setLoadingRows(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!mounted) return;
+    loadMeta();
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    loadDispatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, qStation]);
 
   const filtered = useMemo(() => {
-    return seedDispatches.filter((d) => {
-      const okStation = !qStation || d.station_id === qStation;
-      const okUser = !qUser || String(d.pin_user_id ?? "") === qUser;
+    return rows.filter(d => {
+      const stationId = (d as any).station_id as string | undefined;
+      const companyCode =
+        ((d as any).company_code as string | undefined) ??
+        ((d as any).pin_user_id as string | number | undefined)?.toString();
+
+      const okStation = !qStation || stationId === qStation;
+      const okUser = !qUser || String(companyCode ?? "") === qUser;
+
       const start = from ? new Date(from).getTime() : -Infinity;
       const end = to ? new Date(to).getTime() : Infinity;
-      const dt = new Date(d.started_at).getTime();
+      const dt = (d as any).started_at ? new Date((d as any).started_at).getTime() : 0;
       const okDate = dt >= start && dt <= end;
+
       const plate = plateOf(d);
-      const okPlate =
-        !qPlate ||
-        (qPlate === NONE ? plate === "—" : plate !== "—" && plate === qPlate);
+      const okPlate = !qPlate || (qPlate === NONE ? plate === "—" : plate === qPlate);
+
       return okStation && okUser && okDate && okPlate;
     });
-  }, [qStation, qUser, qPlate, from, to]);
+  }, [rows, qStation, qUser, qPlate, from, to]);
 
   const columns: Column<Dispatch>[] = [
     { key: "id", header: "ID", width: "80px" },
-    { key: "station_name", header: "Estación" },
-    { key: "user_name", header: "Usuario" },
-    { key: "patente", header: "Patente", render: (r) => <code>{plateOf(r)}</code> },
     {
-      key: "litros_autorizados",
-      header: "Autorizados",
-      render: (r) => fmtLiters(r.litros_autorizados),
-      sort: (a, b) => a.litros_autorizados - b.litros_autorizados,
+      key: "station_name",
+      header: "Estación",
+      render: (r: any) => {
+        const stationId = r.station_id;
+        return r.station_name || stationNameById.get(stationId) || stationId || "—";
+      },
     },
     {
-      key: "litros_entregados",
-      header: "Entregados",
-      render: (r) => fmtLiters(r.litros_entregados),
-      sort: (a, b) => a.litros_entregados - b.litros_entregados,
+      key: "user_name",
+      header: "Usuario",
+      render: (r: any) => {
+        const code = r.company_code ?? String(r.pin_user_id ?? "");
+        return r.user_name || userNameByCode.get(code) || code || "—";
+      },
     },
-    { key: "started_at", header: "Inicio", render: (r) => fmtDate(r.started_at) },
-    { key: "ended_at", header: "Fin", render: (r) => fmtDate(r.ended_at) },
+    { key: "patente", header: "Patente", render: (r: any) => <code>{plateOf(r)}</code> },
+    { key: "litros_autorizados", header: "Autorizados", render: (r: any) => fmtLiters(r.litros_autorizados ?? 0) },
+    { key: "litros_entregados", header: "Entregados", render: (r: any) => fmtLiters(r.litros_entregados ?? 0) },
+    { key: "started_at", header: "Inicio", render: (r: any) => (r.started_at ? fmtDate(r.started_at) : "—") },
+    { key: "ended_at", header: "Fin", render: (r: any) => (r.ended_at ? fmtDate(r.ended_at) : "—") },
   ];
+
+  if (!mounted) return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
+
+  const loading = loadingMeta || loadingRows;
 
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Despachos</h1>
-        <button className="btn">Exportar CSV</button>
+        <button className="btn" onClick={loadDispatches} disabled={loading}>
+          Recargar
+        </button>
       </header>
 
+      {error && (
+        <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">
+          {error}
+        </div>
+      )}
+
       <section className="card">
-        {/* Sin 'Estado'. Agregamos Patente como <select> + opción "Sin patente" */}
         <div className="grid md:grid-cols-5 gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Estación</label>
@@ -96,7 +205,7 @@ export default function DispatchesPage() {
               <option value="">Todas</option>
               {stations.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name}
+                  {s.name || s.id}
                 </option>
               ))}
             </select>
@@ -107,8 +216,8 @@ export default function DispatchesPage() {
             <select className="select" value={qUser} onChange={(e) => setQUser(e.target.value)}>
               <option value="">Todos</option>
               {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
+                <option key={u.code} value={u.code}>
+                  {u.name || u.code}
                 </option>
               ))}
             </select>
@@ -129,43 +238,32 @@ export default function DispatchesPage() {
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Desde</label>
-            <input
-              type="datetime-local"
-              className="input"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
+            <input type="datetime-local" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Hasta</label>
-            <input
-              type="datetime-local"
-              className="input"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
+            <input type="datetime-local" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
         </div>
       </section>
 
       <section className="card">
-        <DataTable
-          rows={filtered}
-          columns={columns}
-          initialSortKey="started_at"
-          initialSortDir="desc"
-          onRowClick={(row) => setSelected(row)}
-          rowClassName={(row) => (selected?.id === row.id ? "bg-sky-50" : "")}
-        />
-        <div className="mt-2 text-xs text-slate-500">Tip: hacé click en una fila para ver el detalle.</div>
+        {loading ? (
+          <div className="text-sm text-slate-500">Cargando…</div>
+        ) : (
+          <DataTable
+            rows={filtered}
+            columns={columns}
+            initialSortKey="started_at"
+            initialSortDir="desc"
+            onRowClick={(row: any) => setSelectedId(row.id)}
+            rowClassName={(row: any) => (selectedId === row.id ? "bg-sky-50" : "")}
+          />
+        )}
       </section>
 
-      <Drawer
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        title={selected ? `Despacho #${selected.id}` : ""}
-      >
+      <Drawer open={!!selected} onClose={() => setSelectedId(null)} title={selected ? `Despacho #${selected.id}` : ""}>
         {selected && (
           <Tabs
             defaultTab="resumen"
@@ -174,54 +272,22 @@ export default function DispatchesPage() {
                 key: "resumen",
                 label: "Resumen",
                 content: (
-                  <div className="space-y-4">
-                    <div className="grid md:grid-cols-2 gap-3">
-                      <div className="card">
-                        <h3 className="font-semibold mb-2">Resumen</h3>
-                        <ul className="text-sm space-y-1">
-                          <li><b>Estación:</b> {selected.station_name}</li>
-                          <li><b>Usuario:</b> {selected.user_name || "—"}</li>
-                          <li><b>Patente:</b> <code>{plateOf(selected)}</code></li>
-                          <li><b>Inicio:</b> {fmtDate(selected.started_at)}</li>
-                          <li><b>Fin:</b> {fmtDate(selected.ended_at)}</li>
-                          <li><b>Autorizados:</b> {fmtLiters(selected.litros_autorizados)}</li>
-                          <li><b>Entregados:</b> {fmtLiters(selected.litros_entregados)}</li>
-                          <li><b>Fuente:</b> {selected.source}</li>
-                          <li><b>Notas:</b> {selected.notes || "—"}</li>
-                        </ul>
-                      </div>
-                      <div className="card">
-                        <h3 className="font-semibold mb-2">Eventos</h3>
-                        <ul className="text-sm space-y-1">
-                          {selected.events?.length ? (
-                            selected.events.map((e) => (
-                              <li key={e.id}>
-                                {fmtDate(e.ts)} · <b>{e.state.toUpperCase()}</b>{" "}
-                                <span className="text-slate-400">{e.source || ""}</span>
-                              </li>
-                            ))
-                          ) : (
-                            <li className="text-slate-500">Sin eventos.</li>
-                          )}
-                        </ul>
-                      </div>
-                    </div>
+                  <div className="space-y-2 text-sm">
+                    <div><b>Estación:</b> {(selected as any).station_name || stationNameById.get((selected as any).station_id) || (selected as any).station_id || "—"}</div>
+                    <div><b>Usuario:</b> {(selected as any).user_name || userNameByCode.get((selected as any).company_code) || (selected as any).company_code || "—"}</div>
+                    <div><b>Patente:</b> <code>{plateOf(selected)}</code></div>
+                    <div><b>Inicio:</b> {(selected as any).started_at ? fmtDate((selected as any).started_at) : "—"}</div>
+                    <div><b>Fin:</b> {(selected as any).ended_at ? fmtDate((selected as any).ended_at) : "—"}</div>
+                    <div><b>Autorizados:</b> {fmtLiters((selected as any).litros_autorizados ?? 0)}</div>
+                    <div><b>Entregados:</b> {fmtLiters((selected as any).litros_entregados ?? 0)}</div>
+                    <div><b>Notas:</b> {(selected as any).notes || "—"}</div>
                   </div>
                 ),
               },
               {
                 key: "fotos",
                 label: "Fotos",
-                badge: (
-                  <span className="badge bg-slate-100 text-slate-700">
-                    {(selected.photos?.length ?? 0).toString()}
-                  </span>
-                ),
-                content: (
-                  <div className="card">
-                    <PhotoGallery photos={selected.photos || []} />
-                  </div>
-                ),
+                content: <PhotoGallery photos={(selected as any).photos || []} />,
               },
             ]}
           />
