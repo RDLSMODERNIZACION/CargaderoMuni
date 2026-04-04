@@ -56,7 +56,7 @@ async def _upload_bytes_to_supabase(*, data: bytes, content_type: str, object_pa
 # Schemas (JSON mode)
 # =========================
 class StartDispatchIn(BaseModel):
-    station_id: str = Field(..., examples=["PALACIO"])
+    station_id: str = Field(..., examples=["1"])
     company_code: str = Field(..., examples=["EMP001"])
     photo_path: Optional[str] = Field(None, examples=["https://storage/snap.jpg"])
     note: Optional[str] = Field("despacho iniciado manual", examples=["PIN OK + foto camión"])
@@ -74,51 +74,38 @@ async def start_dispatch(request: Request):
     """
     Endpoint UNIFICADO:
     - Si viene JSON: crea water_dispatch (usa photo_path si viene).
-    - Si viene multipart/form-data: recibe file, sube a Supabase y crea water_dispatch con photo_path=URL pública.
+    - Si viene multipart/form-data: recibe 0..N fotos, las sube a Supabase
+      y crea water_dispatch con photo_path = primera URL si existe.
 
     JSON body:
       { station_id, company_code, photo_path?, note? }
 
     Multipart fields:
-      file (jpg/png) [required]
       station_id (required)
       company_code (required)
       note (optional)
       suffix (optional, default "start")
+      file  (optional)
+      file1 (optional)
+      file2 (optional)
+      file3 (optional)
+      file4 (optional)
     """
     ct = (request.headers.get("content-type") or "").lower()
 
     # -------------------------
-    # MODO MULTIPART (con foto)
+    # MODO MULTIPART (0..N fotos)
     # -------------------------
     if "multipart/form-data" in ct:
         form = await request.form()
 
-        station_id = (form.get("station_id") or "").strip()
-        company_code = (form.get("company_code") or "").strip()
-        note = (form.get("note") or "despacho iniciado por trigger").strip()
-        suffix = (form.get("suffix") or "start").strip()
+        station_id = str(form.get("station_id") or "").strip()
+        company_code = str(form.get("company_code") or "").strip()
+        note = str(form.get("note") or "despacho iniciado por trigger").strip()
+        suffix = str(form.get("suffix") or "start").strip()
 
-        file_obj = form.get("file")
         if not station_id or not company_code:
             raise HTTPException(status_code=422, detail="station_id and company_code are required (multipart)")
-        if file_obj is None or not hasattr(file_obj, "read"):
-            raise HTTPException(status_code=422, detail="file is required (multipart)")
-
-        upload: UploadFile = file_obj  # type: ignore
-
-        content_type = (upload.content_type or "").lower()
-        if content_type not in ("image/jpeg", "image/jpg", "image/png"):
-            raise HTTPException(status_code=415, detail=f"Unsupported content-type: {upload.content_type}")
-
-        data = await upload.read()
-        if not data or len(data) < 1000:
-            raise HTTPException(status_code=400, detail="File empty or too small")
-
-        ext = ".png" if content_type == "image/png" else ".jpg"
-        ts = int(time.time())
-        safe_station = station_id.upper().replace(" ", "_")
-        object_path = f"photos/dispatch_{safe_station}/{suffix}_{ts}_{uuid.uuid4().hex[:8]}{ext}"
 
         # empresa
         async with pool.connection() as conn:
@@ -132,14 +119,41 @@ async def start_dispatch(request: Request):
                     raise HTTPException(status_code=404, detail="company not found or inactive")
                 company_id = int(r[0])
 
-        # subir foto
-        public_url = await _upload_bytes_to_supabase(
-            data=data,
-            content_type=content_type,
-            object_path=object_path,
-        )
+        # aceptar varios nombres posibles de archivo
+        upload_fields = ["file", "file1", "file2", "file3", "file4"]
+        uploaded_urls: list[str] = []
 
-        # crear despacho con photo_path real
+        for idx, field in enumerate(upload_fields, start=1):
+            file_obj = form.get(field)
+            if file_obj is None or not hasattr(file_obj, "read"):
+                continue
+
+            upload: UploadFile = file_obj  # type: ignore
+            content_type = (upload.content_type or "").lower()
+
+            if content_type not in ("image/jpeg", "image/jpg", "image/png"):
+                raise HTTPException(status_code=415, detail=f"Unsupported content-type in {field}: {upload.content_type}")
+
+            data = await upload.read()
+            if not data or len(data) < 1000:
+                raise HTTPException(status_code=400, detail=f"{field} empty or too small")
+
+            ext = ".png" if content_type == "image/png" else ".jpg"
+            ts = int(time.time())
+            safe_station = station_id.upper().replace(" ", "_")
+            object_path = f"photos/dispatch_{safe_station}/{suffix}_{idx}_{ts}_{uuid.uuid4().hex[:8]}{ext}"
+
+            public_url = await _upload_bytes_to_supabase(
+                data=data,
+                content_type=content_type,
+                object_path=object_path,
+            )
+            uploaded_urls.append(public_url)
+
+        # primera foto si existe
+        main_photo = uploaded_urls[0] if uploaded_urls else None
+
+        # crear despacho
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
@@ -148,9 +162,10 @@ async def start_dispatch(request: Request):
                     VALUES (%s, %s, %s, %s)
                     RETURNING id, ts
                     """,
-                    (station_id, company_id, public_url, note),
+                    (station_id, company_id, main_photo, note),
                 )
                 row = await cur.fetchone()
+
                 return JSONResponse(
                     {
                         "ok": True,
@@ -159,7 +174,8 @@ async def start_dispatch(request: Request):
                         "station_id": station_id,
                         "company_code": company_code,
                         "company_id": company_id,
-                        "photo_path": public_url,
+                        "photo_path": main_photo,
+                        "photo_paths": uploaded_urls,
                         "note": note,
                     }
                 )
@@ -172,7 +188,6 @@ async def start_dispatch(request: Request):
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            # empresa
             await cur.execute(
                 "SELECT id FROM public.company WHERE code=%s AND active",
                 (payload.company_code,),
@@ -182,7 +197,6 @@ async def start_dispatch(request: Request):
                 raise HTTPException(status_code=404, detail="company not found or inactive")
             company_id = int(r[0])
 
-            # crear despacho (con photo_path si ya te lo pasan)
             await cur.execute(
                 """
                 INSERT INTO public.water_dispatch (station_id, company_id, photo_path, note)
@@ -200,6 +214,7 @@ async def start_dispatch(request: Request):
                 "company_code": payload.company_code,
                 "company_id": company_id,
                 "photo_path": payload.photo_path,
+                "photo_paths": [payload.photo_path] if payload.photo_path else [],
                 "note": payload.note,
             }
 
@@ -229,13 +244,13 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
     """
     Trae despachos recientes.
     - Si station_id viene: filtra por estación
-    - Si no viene: trae de todas las estaciones (útil para admin)
+    - Si no viene: trae de todas las estaciones
 
     Ej:
       /water/dispatch/recent?limit=200
-      /water/dispatch/recent?station_id=PALACIO&limit=200
+      /water/dispatch/recent?station_id=1&limit=200
     """
-    limit = max(1, min(int(limit), 500))  # cap razonable
+    limit = max(1, min(int(limit), 500))
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -281,8 +296,8 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                 "photo_path": r[5],
                 "note": r[6],
                 "company_id": r[7],
-                "company_name": r[8],   # ✅ lo que necesitás en el front
-                "company_code": r[9],   # (opcional) dejalo si te sirve
+                "company_name": r[8],
+                "company_code": r[9],
             }
         )
 
@@ -295,18 +310,17 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
 @router.post("/dispatch/{dispatch_id}/photo")
 async def attach_photo(dispatch_id: int, request: Request):
     """
-    Adjunta/actualiza la foto (camión) para un despacho EXISTENTE.
-    - Espera multipart/form-data con:
-        file (jpg/png) [required]
-        suffix (optional, default "truck")
-    - Sube a Supabase Storage y actualiza water_dispatch.photo_path
+    Adjunta/actualiza la foto para un despacho existente.
+    Espera multipart/form-data con:
+      file (jpg/png) [required]
+      suffix (optional, default "truck")
     """
     ct = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" not in ct:
         raise HTTPException(status_code=415, detail="Expected multipart/form-data")
 
     form = await request.form()
-    suffix = (form.get("suffix") or "truck").strip()
+    suffix = str(form.get("suffix") or "truck").strip()
 
     file_obj = form.get("file")
     if file_obj is None or not hasattr(file_obj, "read"):
@@ -321,14 +335,13 @@ async def attach_photo(dispatch_id: int, request: Request):
     if not data or len(data) < 1000:
         raise HTTPException(status_code=400, detail="File empty or too small")
 
-    # buscar station_id del dispatch
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("SELECT station_id FROM public.water_dispatch WHERE id=%s", (dispatch_id,))
             row = await cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="dispatch not found")
-            station_id = (row[0] or "UNKNOWN")
+            station_id = row[0] or "UNKNOWN"
 
     ext = ".png" if content_type == "image/png" else ".jpg"
     ts = int(time.time())
@@ -341,7 +354,6 @@ async def attach_photo(dispatch_id: int, request: Request):
         object_path=object_path,
     )
 
-    # update photo_path
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
