@@ -17,7 +17,13 @@ type DispatchItem = {
   station_id: string;
   liters: number | null;
   flow_l_min?: number | null;
+
+  // Compatibilidad vieja: primera foto
   photo_path?: string | null;
+
+  // Nuevo: todas las fotos
+  photo_paths?: string[] | null;
+
   note?: string | null;
 
   company_id?: number | null;
@@ -41,6 +47,40 @@ function safeFileNameFromUrl(url: string) {
   }
 }
 
+function withCacheBust(url: string, id: number, index: number) {
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${id}_${index}`;
+}
+
+function getPhotoUrls(item: DispatchItem | null): string[] {
+  if (!item) return [];
+
+  const urls: string[] = [];
+
+  if (Array.isArray(item.photo_paths)) {
+    for (const p of item.photo_paths) {
+      if (typeof p === "string" && p.trim()) {
+        urls.push(p.trim());
+      }
+    }
+  }
+
+  // Compatibilidad con registros viejos que solo tienen photo_path
+  if (item.photo_path && item.photo_path.trim()) {
+    urls.push(item.photo_path.trim());
+  }
+
+  // Quitar duplicados manteniendo orden
+  return Array.from(new Set(urls));
+}
+
+function photoLabel(index: number) {
+  if (index === 0) return "Foto 1 · Teclado";
+  if (index === 1) return "Foto 2 · Cámara 2";
+  if (index === 2) return "Foto 3 · Cámara 3";
+  return `Foto ${index + 1}`;
+}
+
 export default function DispatchesPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -48,7 +88,7 @@ export default function DispatchesPage() {
   const [stations, setStations] = useState<Station[]>([]);
   const [rows, setRows] = useState<DispatchItem[]>([]);
 
-  // ✅ filtros
+  // filtros
   const [qStation, setQStation] = useState<string>(""); // "" = Todas
   const [qCompany, setQCompany] = useState<string>(""); // "" = Todas
   const [from, setFrom] = useState<string>("");
@@ -60,6 +100,7 @@ export default function DispatchesPage() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const selected = useMemo(() => rows.find((r) => r.id === selectedId) || null, [rows, selectedId]);
+  const selectedPhotos = useMemo(() => getPhotoUrls(selected), [selected]);
 
   useEffect(() => {
     if (selectedId != null && !selected) setSelectedId(null);
@@ -71,12 +112,15 @@ export default function DispatchesPage() {
     return m;
   }, [stations]);
 
-  // ✅ opciones de empresa detectadas desde los propios despachos
+  // opciones de empresa detectadas desde los propios despachos
   const companyOptions = useMemo(() => {
     const m = new Map<string, { id: number; label: string }>();
+
     for (const r of rows) {
       if (r.company_id == null) continue;
+
       const key = String(r.company_id);
+
       if (!m.has(key)) {
         m.set(key, {
           id: r.company_id,
@@ -85,17 +129,23 @@ export default function DispatchesPage() {
       } else {
         const cur = m.get(key)!;
         const better = r.company_name || r.company_code;
-        if (better && (cur.label.startsWith("#") || cur.label === String(cur.id))) cur.label = better;
+
+        if (better && (cur.label.startsWith("#") || cur.label === String(cur.id))) {
+          cur.label = better;
+        }
       }
     }
+
     const arr = Array.from(m.values());
     arr.sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
+
     return arr;
   }, [rows]);
 
   async function loadStations() {
     setLoadingMeta(true);
     setError(null);
+
     try {
       const st = await apiJSON<Station[]>("/stations");
       setStations(Array.isArray(st) ? st : []);
@@ -118,6 +168,7 @@ export default function DispatchesPage() {
       if (qCompany) qs.set("company_id", qCompany);
 
       const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(`/water/dispatch/recent?${qs.toString()}`);
+
       setRows(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
       setError(e?.message ?? "Error cargando despachos");
@@ -144,8 +195,10 @@ export default function DispatchesPage() {
 
     return rows.filter((d) => {
       const dt = d.ts ? new Date(d.ts).getTime() : 0;
+
       if (!(dt >= start && dt <= end)) return false;
       if (companyId != null && (d.company_id ?? null) !== companyId) return false;
+
       return true;
     });
   }, [rows, from, to, qCompany]);
@@ -176,18 +229,25 @@ export default function DispatchesPage() {
     },
     {
       key: "photo",
-      header: "Foto",
-      render: (r: DispatchItem) => (r.photo_path ? "Sí" : "No"),
+      header: "Fotos",
+      render: (r: DispatchItem) => {
+        const count = getPhotoUrls(r).length;
+        return count > 0 ? `${count}` : "No";
+      },
     },
   ];
 
-  if (!mounted) return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
+  if (!mounted) {
+    return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
+  }
+
   const loading = loadingMeta || loadingRows;
 
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Despachos</h1>
+
         <button className="btn" onClick={loadDispatches} disabled={loading}>
           Recargar
         </button>
@@ -276,20 +336,25 @@ export default function DispatchesPage() {
                     <div>
                       <b>Estación:</b> {stationNameById.get(selected.station_id) || selected.station_id}
                     </div>
+
                     <div>
                       <b>Fecha:</b> {selected.ts ? fmtDate(selected.ts) : "—"}
                     </div>
+
                     <div>
                       <b>Empresa:</b> {selected.company_name || selected.company_code || "—"}
                     </div>
+
                     <div>
                       <b>Litros:</b> {fmtLiters(selected.liters ?? 0)}
                     </div>
+
                     <div>
                       <b>Nota:</b> {selected.note || "—"}
                     </div>
+
                     <div>
-                      <b>Foto:</b> {selected.photo_path ? "Sí" : "No"}
+                      <b>Fotos:</b> {selectedPhotos.length > 0 ? selectedPhotos.length : "No"}
                     </div>
                   </div>
                 ),
@@ -299,52 +364,56 @@ export default function DispatchesPage() {
                 label: "Fotos",
                 badge: (
                   <span className="badge bg-slate-100 text-slate-700">
-                    {(selected.photo_path ? 1 : 0).toString()}
+                    {selectedPhotos.length.toString()}
                   </span>
                 ),
                 content: (
                   <div className="space-y-3">
-                    {selected.photo_path ? (
-                      <div className="card">
-                        <div className="text-xs text-slate-500 mb-2">Vista previa</div>
+                    {selectedPhotos.length > 0 ? (
+                      selectedPhotos.map((photoUrl, index) => (
+                        <div key={`${selected.id}_${index}_${photoUrl}`} className="card">
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div>
+                              <div className="text-xs text-slate-500">Vista previa</div>
+                              <div className="text-sm font-semibold text-slate-700">{photoLabel(index)}</div>
+                            </div>
 
-                        <a
-                          href={selected.photo_path}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-block w-full"
-                          title="Abrir en nueva pestaña"
-                        >
-                          <img
-                            src={
-                              selected.photo_path.includes("?")
-                                ? `${selected.photo_path}&v=${selected.id}`
-                                : `${selected.photo_path}?v=${selected.id}`
-                            }
-                            alt={`Foto despacho ${selected.id}`}
-                            className="w-full max-h-[60vh] object-contain rounded-lg border bg-white"
-                            loading="lazy"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = "none";
-                            }}
-                          />
-                        </a>
+                            <span className="badge bg-slate-100 text-slate-700">
+                              {index + 1} / {selectedPhotos.length}
+                            </span>
+                          </div>
 
-                        <div className="mt-3 flex items-center gap-2">
-                          <a href={selected.photo_path} target="_blank" rel="noreferrer" className="btn btn-secondary">
-                            Abrir
-                          </a>
                           <a
-                            href={selected.photo_path}
-                            download={safeFileNameFromUrl(selected.photo_path)}
-                            className="btn btn-secondary"
+                            href={photoUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-block w-full"
+                            title="Abrir en nueva pestaña"
                           >
-                            Descargar
+                            <img
+                              src={withCacheBust(photoUrl, selected.id, index)}
+                              alt={`Foto ${index + 1} despacho ${selected.id}`}
+                              className="w-full max-h-[60vh] object-contain rounded-lg border bg-white"
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = "none";
+                              }}
+                            />
                           </a>
+
+                          <div className="mt-3 flex items-center gap-2">
+                            <a href={photoUrl} target="_blank" rel="noreferrer" className="btn btn-secondary">
+                              Abrir
+                            </a>
+
+                            <a href={photoUrl} download={safeFileNameFromUrl(photoUrl)} className="btn btn-secondary">
+                              Descargar
+                            </a>
+                          </div>
                         </div>
-                      </div>
+                      ))
                     ) : (
-                      <div className="card text-sm text-slate-500">Sin foto</div>
+                      <div className="card text-sm text-slate-500">Sin fotos</div>
                     )}
                   </div>
                 ),

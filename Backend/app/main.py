@@ -1,29 +1,48 @@
 # app/main.py
-import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg.errors import Error as PsyError
+
+from app.db import open_pool, close_pool, ping
 
 # Routers existentes
 from app.routes.hik import router as hik_router
 from app.routes.water import router as water_router
 from app.routes.company import router as company_router
 
-# Nuevo router (sync de usuarios Hikvision desde company)
-from app.routes.company_sync import router as company_sync_router  # <- NUEVO
+# Router sync de usuarios Hikvision desde company
+from app.routes.company_sync import router as company_sync_router
 
-# ✅ NUEVO: router de fotos (upload a Supabase Storage)
-from app.routes.fotos.media import router as fotos_media_router  # <- NUEVO
+# Router fotos
+from app.routes.fotos.media import router as fotos_media_router
 
-# ✅ NUEVO: stations
-from app.routes.stations import router as stations_router  # <- NUEVO
+# Stations
+from app.routes.stations import router as stations_router
 
-# ✅ NUEVO: KPI
-from app.routes.kpi import router as kpi_router  # <- NUEVO
+# KPI
+from app.routes.kpi import router as kpi_router
 
-app = FastAPI(title="DIRAC Access & Water API")
 
-# CORS amplio para pruebas (sin cambios)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Se abre el pool cuando FastAPI ya tiene loop async activo.
+    await open_pool()
+
+    try:
+        yield
+    finally:
+        # Se cierra correctamente al apagar.
+        await close_pool()
+
+
+app = FastAPI(
+    title="DIRAC Access & Water API",
+    lifespan=lifespan,
+)
+
+# CORS amplio para pruebas
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,31 +51,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 async def health():
-    # ping simple a DB
     try:
-        from app.db import pool
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT 1")
-                row = await cur.fetchone()
-                return {"ok": True, "db": (row and row[0] == 1)}
+        db_ok = await ping()
+        return {
+            "ok": True,
+            "db": db_ok,
+        }
     except PsyError as e:
-        return {"ok": False, "db": False, "error": str(e)}
+        return {
+            "ok": False,
+            "db": False,
+            "error": str(e),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "db": False,
+            "error": str(e),
+        }
+
 
 # Montar routers
 app.include_router(hik_router, prefix="/access/hik", tags=["hik"])
 app.include_router(water_router, prefix="/water", tags=["water"])
 app.include_router(company_router, prefix="/company", tags=["company"])
-app.include_router(company_sync_router, prefix="/company", tags=["company"])  # <- NUEVO
+app.include_router(company_sync_router, prefix="/company", tags=["company"])
 
-# ✅ NUEVO: estaciones
-app.include_router(stations_router, tags=["stations"])  # /stations
+# Estaciones
+app.include_router(stations_router, tags=["stations"])
 
-# ✅ NUEVO: KPI (prefijo definido en el router: /kpi)
+# KPI
 app.include_router(kpi_router)
 
-# ✅ NUEVO: upload de fotos
+# Upload de fotos
 # Endpoint: POST /fotos/media/upload
 app.include_router(fotos_media_router)
