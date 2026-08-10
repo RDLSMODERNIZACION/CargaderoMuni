@@ -1,9 +1,8 @@
 import os
-import secrets
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import pool
@@ -23,40 +22,6 @@ class MockTopupIn(BaseModel):
         decimal_places=2,
     )
     note: str | None = "Recarga de prueba"
-
-
-def require_admin_key(
-    received_key: str | None,
-) -> None:
-    """
-    Protege las operaciones administrativas de saldo.
-    """
-
-    expected_key = os.getenv(
-        "WALLET_ADMIN_KEY",
-        "",
-    )
-
-    if not expected_key:
-        raise HTTPException(
-            status_code=503,
-            detail="WALLET_ADMIN_KEY is not configured",
-        )
-
-    if not received_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Admin key is required",
-        )
-
-    if not secrets.compare_digest(
-        received_key,
-        expected_key,
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid admin key",
-        )
 
 
 def mock_topups_enabled() -> bool:
@@ -118,13 +83,10 @@ async def get_billing_config():
 @router.get("/company/{company_code}")
 async def get_company_wallet(
     company_code: str,
-    x_admin_key: str | None = Header(None),
 ):
     """
     Devuelve el saldo y la capacidad de carga de una empresa.
     """
-
-    require_admin_key(x_admin_key)
 
     async with pool.connection() as connection:
         async with connection.cursor() as cursor:
@@ -196,13 +158,10 @@ async def get_company_wallet(
 async def get_company_movements(
     company_code: str,
     limit: int = 50,
-    x_admin_key: str | None = Header(None),
 ):
     """
     Devuelve los movimientos de saldo de una empresa.
     """
-
-    require_admin_key(x_admin_key)
 
     safe_limit = max(
         1,
@@ -267,13 +226,12 @@ async def get_company_movements(
 async def create_mock_topup(
     company_code: str,
     body: MockTopupIn,
-    x_admin_key: str | None = Header(None),
 ):
     """
     Acredita saldo ficticio para probar el sistema.
 
-    Esta función deberá desactivarse cuando se incorpore
-    la acreditación real mediante Pago TIC.
+    Este endpoint es temporal y no posee autenticación.
+    Debe desactivarse después de finalizar las pruebas.
     """
 
     if not mock_topups_enabled():
@@ -281,8 +239,6 @@ async def create_mock_topup(
             status_code=404,
             detail="Mock topups are disabled",
         )
-
-    require_admin_key(x_admin_key)
 
     external_reference = (
         f"mock-{uuid.uuid4()}"
