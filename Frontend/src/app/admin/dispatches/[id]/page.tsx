@@ -44,11 +44,6 @@ type DispatchDetail = {
   photo_paths?: string[] | null;
   note?: string | null;
   ai_vehicle_analysis?: VehicleAI | null;
-  billing_status?: string | null;
-  price_per_m3?: number | null;
-  amount?: number | null;
-  max_affordable_liters?: number | null;
-  debited_at?: string | null;
   company_id?: number | null;
   company_name?: string | null;
   company_code?: string | null;
@@ -460,29 +455,25 @@ export default function DispatchDetailPage() {
               <div className="font-medium">#{item.id}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Estado de facturación</div>
-              <div className="font-medium">{item.billing_status || "—"}</div>
+              <div className="text-xs text-slate-500">Estación</div>
+              <div className="font-medium">{item.station_name || item.station_id}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Precio por m³</div>
-              <div className="font-medium">{item.price_per_m3 ?? "—"}</div>
+              <div className="text-xs text-slate-500">Empresa</div>
+              <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Importe</div>
-              <div className="font-medium">{item.amount ?? "—"}</div>
+              <div className="text-xs text-slate-500">Fecha</div>
+              <div className="font-medium">{item.ts ? fmtDate(item.ts) : "—"}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Máximo autorizado</div>
+              <div className="text-xs text-slate-500">Litros</div>
+              <div className="font-medium">{fmtLiters(item.liters ?? 0)}</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">Caudal</div>
               <div className="font-medium">
-                {item.max_affordable_liters != null
-                  ? fmtLiters(item.max_affordable_liters)
-                  : "—"}
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-slate-500">Debitado</div>
-              <div className="font-medium">
-                {item.debited_at ? fmtDate(item.debited_at) : "—"}
+                {item.flow_l_min != null ? `${item.flow_l_min} L/min` : "—"}
               </div>
             </div>
           </div>
