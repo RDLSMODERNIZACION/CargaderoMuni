@@ -14,6 +14,10 @@ export type Station = {
   device_ip?: string | null;
   device_model?: string | null;
   device_serial?: string | null;
+  connections_status?: "ok" | "alert" | "no_data";
+  connections_total?: number;
+  connections_online?: number;
+  connections_problems?: number;
 };
 
 type StationForm = {
@@ -41,8 +45,36 @@ export default function StationsPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiJSON<Station[]>("/stations");
-      setRows(Array.isArray(data) ? data : []);
+      const [data, summary] = await Promise.all([
+        apiJSON<Station[]>("/stations"),
+        apiJSON<{
+          ok: boolean;
+          items: Array<{
+            station_id: string;
+            status: "ok" | "alert" | "no_data";
+            total: number;
+            online: number;
+            problems: number;
+          }>;
+        }>("/system-health/stations-summary"),
+      ]);
+
+      const stations = Array.isArray(data) ? data : [];
+      const summaries = Array.isArray(summary?.items) ? summary.items : [];
+      const byStation = new Map(summaries.map((s) => [String(s.station_id), s]));
+
+      setRows(
+        stations.map((station) => {
+          const health = byStation.get(String(station.id));
+          return {
+            ...station,
+            connections_status: health?.status ?? "no_data",
+            connections_total: health?.total ?? 0,
+            connections_online: health?.online ?? 0,
+            connections_problems: health?.problems ?? 0,
+          };
+        })
+      );
     } catch (e: any) {
       setError(e?.message ?? "Error al cargar estaciones");
     } finally {
@@ -102,6 +134,35 @@ export default function StationsPage() {
           {r.active ? "Activa" : "Inactiva"}
         </Badge>
       ),
+    },
+    {
+      key: "connections",
+      header: "Conexiones",
+      render: (r) => {
+        if (r.connections_status === "ok") {
+          return (
+            <div className="flex items-center gap-2">
+              <Badge color="green">Todo OK</Badge>
+              <span className="text-xs text-slate-500">
+                {r.connections_online}/{r.connections_total} OK
+              </span>
+            </div>
+          );
+        }
+
+        if (r.connections_status === "alert") {
+          return (
+            <div className="flex items-center gap-2">
+              <Badge color="yellow">Alerta</Badge>
+              <span className="text-xs text-slate-500">
+                {r.connections_online}/{r.connections_total} OK
+              </span>
+            </div>
+          );
+        }
+
+        return <Badge color="slate">Sin datos</Badge>;
+      },
     },
   ];
 
