@@ -120,37 +120,12 @@ async def update_company(company_id: int, body: CompanyPatch):
 
 @router.delete("/id/{company_id}")
 async def delete_company(company_id: int):
+    """
+    Elimina la empresa. Los despachos históricos conservan su registro y
+    company_id pasa a NULL por la FK ON DELETE SET NULL.
+    """
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT
-                  (SELECT COUNT(*) FROM public.water_dispatch WHERE company_id = %s) AS dispatches,
-                  (SELECT COUNT(*) FROM public.wallet_movement WHERE company_id = %s) AS wallet_movements,
-                  (SELECT COUNT(*) FROM public.water_payment WHERE company_id = %s) AS payments,
-                  (SELECT COUNT(*) FROM public.company_wallet WHERE company_id = %s) AS wallets
-                """,
-                (company_id, company_id, company_id, company_id),
-            )
-            counts = await cur.fetchone()
-
-            dispatches = int(counts[0] or 0)
-            wallet_movements = int(counts[1] or 0)
-            payments = int(counts[2] or 0)
-            wallets = int(counts[3] or 0)
-
-            if any(v > 0 for v in (dispatches, wallet_movements, payments, wallets)):
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "message": "La empresa tiene historial o datos financieros asociados. Desactivala en lugar de eliminarla.",
-                        "dispatches": dispatches,
-                        "wallet_movements": wallet_movements,
-                        "payments": payments,
-                        "wallets": wallets,
-                    },
-                )
-
             await cur.execute(
                 "DELETE FROM public.company WHERE id = %s RETURNING id",
                 (company_id,),
