@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
 from app.db import pool
+from app.services.vehicle_ai import analyze_dispatch_vehicle
 
 router = APIRouter()
 
@@ -252,10 +253,13 @@ async def start_dispatch(request: Request):
 
                 row = await cur.fetchone()
 
+        dispatch_id = int(row[0])
+        ai_analysis = await analyze_dispatch_vehicle(dispatch_id) if uploaded_urls else {"status": "no_photos"}
+
         return JSONResponse(
             {
                 "ok": True,
-                "id": int(row[0]),
+                "id": dispatch_id,
                 "ts": row[1].isoformat() if row and row[1] else None,
                 "station_id": station_id,
                 "company_code": company_code,
@@ -263,6 +267,7 @@ async def start_dispatch(request: Request):
                 "photo_path": main_photo,
                 "photo_paths": uploaded_urls,
                 "note": note,
+                "ai_vehicle_analysis": ai_analysis,
             }
         )
 
@@ -392,6 +397,7 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                         wd.photo_path,
                         wd.photo_paths,
                         wd.note,
+                        wd.ai_vehicle_analysis,
                         c.id AS company_id,
                         c.name AS company_name,
                         c.code AS company_code
@@ -416,6 +422,7 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                         wd.photo_path,
                         wd.photo_paths,
                         wd.note,
+                        wd.ai_vehicle_analysis,
                         c.id AS company_id,
                         c.name AS company_name,
                         c.code AS company_code
@@ -446,9 +453,10 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                 "photo_path": photo_path,
                 "photo_paths": photo_paths,
                 "note": r[7],
-                "company_id": r[8],
-                "company_name": r[9],
-                "company_code": r[10],
+                "ai_vehicle_analysis": r[8] or {},
+                "company_id": r[9],
+                "company_name": r[10],
+                "company_code": r[11],
             }
         )
 
@@ -575,11 +583,14 @@ async def attach_photo(dispatch_id: int, request: Request):
                     detail="dispatch not found",
                 )
 
+    ai_analysis = await analyze_dispatch_vehicle(dispatch_id)
+
     return JSONResponse(
         {
             "ok": True,
             "dispatch_id": dispatch_id,
             "photo_path": public_url,
             "photo_paths_added": [public_url],
+            "ai_vehicle_analysis": ai_analysis,
         }
     )
