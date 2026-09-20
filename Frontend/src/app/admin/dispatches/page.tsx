@@ -250,7 +250,7 @@ export default function DispatchesPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center justify-between gap-3 flex-wrap">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Despachos</h1>
           <p className="text-sm text-slate-500 mt-1">
@@ -258,11 +258,11 @@ export default function DispatchesPage() {
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <button className="btn btn-secondary" onClick={loadDispatches} disabled={loading}>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <button className="btn btn-secondary flex-1 justify-center sm:flex-none" onClick={loadDispatches} disabled={loading}>
             Recargar
           </button>
-          <button className="btn" onClick={() => setCreateOpen(true)}>
+          <button className="btn flex-1 justify-center sm:flex-none" onClick={() => setCreateOpen(true)}>
             + Nuevo despacho
           </button>
         </div>
