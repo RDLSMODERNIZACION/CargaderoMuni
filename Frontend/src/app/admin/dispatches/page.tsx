@@ -28,6 +28,25 @@ type DispatchItem = {
 };
 
 type Station = { id: string; name?: string | null; active: boolean };
+type Company = { id: number; name: string; code?: string | null; active: boolean };
+
+type CreateForm = {
+  station_id: string;
+  company_id: string;
+  liters: string;
+  flow_l_min: string;
+  ts: string;
+  note: string;
+};
+
+const emptyCreate: CreateForm = {
+  station_id: "",
+  company_id: "",
+  liters: "",
+  flow_l_min: "",
+  ts: "",
+  note: "",
+};
 
 function norm(s?: string | null) {
   return (s ?? "").trim().toLowerCase();
@@ -50,6 +69,7 @@ export default function DispatchesPage() {
   useEffect(() => setMounted(true), []);
 
   const [stations, setStations] = useState<Station[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [rows, setRows] = useState<DispatchItem[]>([]);
   const [qStation, setQStation] = useState("");
   const [qCompany, setQCompany] = useState("");
@@ -58,6 +78,9 @@ export default function DispatchesPage() {
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState<CreateForm>(emptyCreate);
 
   const stationNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -66,26 +89,35 @@ export default function DispatchesPage() {
   }, [stations]);
 
   const companyOptions = useMemo(() => {
-    const m = new Map<string, { id: number; label: string }>();
+    if (companies.length) {
+      return companies
+        .filter((c) => c.active)
+        .map((c) => ({ id: c.id, label: c.name || c.code || String(c.id) }))
+        .sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
+    }
 
+    const m = new Map<string, { id: number; label: string }>();
     for (const r of rows) {
       if (r.company_id == null) continue;
       const key = String(r.company_id);
-      const label = r.company_name || r.company_code || `#${r.company_id}`;
+      const label = r.company_name || r.company_code || "#" + r.company_id;
       if (!m.has(key)) m.set(key, { id: r.company_id, label });
     }
-
     return Array.from(m.values()).sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
-  }, [rows]);
+  }, [rows, companies]);
 
-  async function loadStations() {
+  async function loadMeta() {
     setLoadingMeta(true);
     setError(null);
     try {
-      const st = await apiJSON<Station[]>("/stations");
+      const [st, co] = await Promise.all([
+        apiJSON<Station[]>("/stations"),
+        apiJSON<{ ok: boolean; items: Company[] }>("/company?active=false"),
+      ]);
       setStations(Array.isArray(st) ? st : []);
+      setCompanies(Array.isArray(co?.items) ? co.items : []);
     } catch (e: any) {
-      setError(e?.message ?? "Error cargando estaciones");
+      setError(e?.message ?? "Error cargando datos");
     } finally {
       setLoadingMeta(false);
     }
@@ -101,7 +133,7 @@ export default function DispatchesPage() {
       if (qStation) qs.set("station_id", qStation);
 
       const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(
-        `/water/dispatch/recent?${qs.toString()}`
+        "/water/dispatch/recent?" + qs.toString()
       );
       setRows(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
@@ -112,9 +144,45 @@ export default function DispatchesPage() {
     }
   }
 
+  async function createDispatch() {
+    if (!form.station_id || !form.company_id) {
+      setError("Seleccioná una estación y una empresa.");
+      return;
+    }
+
+    setCreating(true);
+    setError(null);
+
+    try {
+      const payload: any = {
+        station_id: form.station_id,
+        company_id: Number(form.company_id),
+        note: form.note.trim() || "despacho creado manualmente",
+      };
+
+      if (form.liters !== "") payload.liters = Number(form.liters);
+      if (form.flow_l_min !== "") payload.flow_l_min = Number(form.flow_l_min);
+      if (form.ts) payload.ts = new Date(form.ts).toISOString();
+
+      const created = await apiJSON<{ ok: boolean; id: number }>("/water/dispatch/admin", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setCreateOpen(false);
+      setForm(emptyCreate);
+      await loadDispatches();
+      router.push("/admin/dispatches/" + created.id);
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo crear el despacho");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   useEffect(() => {
     if (!mounted) return;
-    loadStations();
+    loadMeta();
   }, [mounted]);
 
   useEffect(() => {
@@ -181,17 +249,22 @@ export default function DispatchesPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold">Despachos</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Seleccioná un despacho para abrir su detalle completo.
+            Consultá o administrá despachos manualmente.
           </p>
         </div>
 
-        <button className="btn" onClick={loadDispatches} disabled={loading}>
-          Recargar
-        </button>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={loadDispatches} disabled={loading}>
+            Recargar
+          </button>
+          <button className="btn" onClick={() => setCreateOpen(true)}>
+            + Nuevo despacho
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -228,22 +301,12 @@ export default function DispatchesPage() {
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Desde</label>
-            <input
-              type="datetime-local"
-              className="input"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
+            <input type="datetime-local" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Hasta</label>
-            <input
-              type="datetime-local"
-              className="input"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
+            <input type="datetime-local" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
 
           <div className="flex items-end justify-end">
@@ -272,10 +335,112 @@ export default function DispatchesPage() {
             columns={columns}
             initialSortKey="ts"
             initialSortDir="desc"
-            onRowClick={(row: DispatchItem) => router.push(`/admin/dispatches/${row.id}`)}
+            onRowClick={(row: DispatchItem) => router.push("/admin/dispatches/" + row.id)}
           />
         )}
       </section>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-2xl p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">Nuevo despacho manual</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Para correcciones, pruebas o cargas administrativas.
+                </p>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setCreateOpen(false)} disabled={creating}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Estación</label>
+                <select
+                  className="select"
+                  value={form.station_id}
+                  onChange={(e) => setForm((p) => ({ ...p, station_id: e.target.value }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {stations.filter((s) => s.active).map((s) => (
+                    <option key={s.id} value={s.id}>{s.name || s.id}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Empresa</label>
+                <select
+                  className="select"
+                  value={form.company_id}
+                  onChange={(e) => setForm((p) => ({ ...p, company_id: e.target.value }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {companyOptions.map((c) => (
+                    <option key={c.id} value={String(c.id)}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Litros</label>
+                <input
+                  type="number"
+                  min="0"
+                  className="input"
+                  value={form.liters}
+                  onChange={(e) => setForm((p) => ({ ...p, liters: e.target.value }))}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Caudal L/min</label>
+                <input
+                  type="number"
+                  min="0"
+                  className="input"
+                  value={form.flow_l_min}
+                  onChange={(e) => setForm((p) => ({ ...p, flow_l_min: e.target.value }))}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 md:col-span-2">
+                <label className="text-xs text-slate-500">Fecha y hora</label>
+                <input
+                  type="datetime-local"
+                  className="input"
+                  value={form.ts}
+                  onChange={(e) => setForm((p) => ({ ...p, ts: e.target.value }))}
+                />
+                <span className="text-xs text-slate-400">Si queda vacío se usa la fecha y hora actual.</span>
+              </div>
+
+              <div className="flex flex-col gap-1 md:col-span-2">
+                <label className="text-xs text-slate-500">Nota</label>
+                <textarea
+                  className="input min-h-[90px]"
+                  value={form.note}
+                  onChange={(e) => setForm((p) => ({ ...p, note: e.target.value }))}
+                  placeholder="Observación administrativa"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setCreateOpen(false)} disabled={creating}>
+                Cancelar
+              </button>
+              <button className="btn" onClick={createDispatch} disabled={creating}>
+                {creating ? "Creando…" : "Crear despacho"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
