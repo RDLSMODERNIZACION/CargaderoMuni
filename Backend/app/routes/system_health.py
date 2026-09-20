@@ -133,6 +133,7 @@ async def list_health(station_id: Optional[str] = None):
                         latency_ms, last_error, last_seen, metadata
                     FROM public.system_device_health
                     WHERE station_id = %s
+                      AND device_id LIKE %s
                     ORDER BY
                         CASE device_type
                             WHEN 'access_control' THEN 1
@@ -143,7 +144,7 @@ async def list_health(station_id: Optional[str] = None):
                         END,
                         name
                     """,
-                    (station_id,),
+                    (station_id, f"{station_id}:%"),
                 )
             else:
                 await cur.execute(
@@ -266,9 +267,10 @@ async def weekly_health(station_id: str):
                 SELECT device_id, name
                 FROM public.system_device_health
                 WHERE station_id = %s
+                  AND device_id LIKE %s
                 ORDER BY name
                 """,
-                (station_id,),
+                (station_id, f"{station_id}:%"),
             )
             devices = await cur.fetchall()
 
