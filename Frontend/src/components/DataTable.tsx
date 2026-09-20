@@ -51,7 +51,7 @@ export default function DataTable<T extends { [k: string]: any }>({
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div className="-mx-1 overflow-x-auto px-1 sm:mx-0 sm:px-0">
       <table className="table">
         <thead>
           <tr>
