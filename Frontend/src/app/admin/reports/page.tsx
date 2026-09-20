@@ -252,7 +252,7 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-end justify-between gap-4 flex-wrap">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">KPI del cargadero</h1>
           <p className="text-sm text-slate-500 mt-1 capitalize">
@@ -260,13 +260,13 @@ export default function ReportsPage() {
           </p>
         </div>
 
-        <div className="flex items-end gap-2 flex-wrap">
+        <div className="flex w-full items-end gap-2 sm:w-auto">
           <button type="button" className="btn btn-secondary" onClick={() => setMonth(addMonths(month, -1))}>
             ←
           </button>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Mes</label>
-            <input type="month" className="input" value={month} onChange={(e) => setMonth(e.target.value)} />
+            <input type="month" className="input min-w-0" value={month} onChange={(e) => setMonth(e.target.value)} />
           </div>
           <button type="button" className="btn btn-secondary" onClick={() => setMonth(addMonths(month, 1))}>
             →
