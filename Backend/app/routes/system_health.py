@@ -133,7 +133,6 @@ async def list_health(station_id: Optional[str] = None):
                         latency_ms, last_error, last_seen, metadata
                     FROM public.system_device_health
                     WHERE station_id = %s
-                      AND device_id LIKE %s
                     ORDER BY
                         CASE device_type
                             WHEN 'access_control' THEN 1
@@ -144,7 +143,7 @@ async def list_health(station_id: Optional[str] = None):
                         END,
                         name
                     """,
-                    (station_id, f"{station_id}:%"),
+                    (station_id,),
                 )
             else:
                 await cur.execute(
@@ -158,6 +157,21 @@ async def list_health(station_id: Optional[str] = None):
                 )
 
             rows = await cur.fetchall()
+
+    # Durante la transición pueden coexistir IDs viejos ("teclado")
+    # y nuevos ("1:teclado"). Para una estación, priorizamos el ID
+    # prefijado y evitamos mostrar duplicados.
+    if station_id:
+        deduped = {}
+        prefix = f"{station_id}:"
+        for row in rows:
+            logical_key = (row[1], row[2], row[3])
+            current = deduped.get(logical_key)
+            row_scoped = str(row[0]).startswith(prefix)
+            current_scoped = bool(current and str(current[0]).startswith(prefix))
+            if current is None or (row_scoped and not current_scoped):
+                deduped[logical_key] = row
+        rows = list(deduped.values())
 
     now = datetime.now(timezone.utc)
     items = []
@@ -267,10 +281,9 @@ async def weekly_health(station_id: str):
                 SELECT device_id, name
                 FROM public.system_device_health
                 WHERE station_id = %s
-                  AND device_id LIKE %s
                 ORDER BY name
                 """,
-                (station_id, f"{station_id}:%"),
+                (station_id,),
             )
             devices = await cur.fetchall()
 
