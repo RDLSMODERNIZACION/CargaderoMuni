@@ -35,11 +35,11 @@ function statusLabel(status: string) {
   return status || "Desconocido";
 }
 
-function statusColor(status: string): "green" | "yellow" | "red" | "gray" {
+function statusColor(status: string): "green" | "yellow" | "red" | "slate" {
   if (status === "online") return "green";
   if (status === "auth_error" || status === "degraded") return "yellow";
   if (status === "offline") return "red";
-  return "gray";
+  return "slate";
 }
 
 function ago(seconds?: number | null) {
