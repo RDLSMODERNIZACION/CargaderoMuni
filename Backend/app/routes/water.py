@@ -144,11 +144,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
       company_code
       note
       suffix
-      file
-      file1
-      file2
-      file3
-      file4
+      file1..fileN (cantidad dinámica)
 
     Guarda:
       - photo_path: primera foto recibida
@@ -199,20 +195,17 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
 
                     company_id = int(r[0])
 
-        # Aceptamos varios nombres de archivo desde Node-RED.
-        # Tu flujo manda:
-        #   file1 = teclado
-        #   file2 = camara_2
-        #   file3 = camara_3
-        upload_fields = ["file", "file1", "file2", "file3", "file4"]
+        # Aceptamos cantidad dinámica de archivos desde Node-RED.
+        # Cualquier campo multipart cuyo valor sea un UploadFile es procesado.
         uploaded_urls: list[str] = []
 
-        for idx, field in enumerate(upload_fields, start=1):
-            file_obj = form.get(field)
+        upload_items = [
+            (field, value)
+            for field, value in form.multi_items()
+            if hasattr(value, "read")
+        ]
 
-            if file_obj is None or not hasattr(file_obj, "read"):
-                continue
-
+        for idx, (field, file_obj) in enumerate(upload_items, start=1):
             upload: UploadFile = file_obj  # type: ignore
 
             content_type = (upload.content_type or "").lower()
