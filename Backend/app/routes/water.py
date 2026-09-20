@@ -6,7 +6,7 @@ import uuid
 from typing import Optional, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
@@ -108,7 +108,7 @@ class SetLitersIn(BaseModel):
 # DISPATCH START
 # =========================
 @router.post("/dispatch/start")
-async def start_dispatch(request: Request):
+async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint unificado.
 
@@ -254,7 +254,9 @@ async def start_dispatch(request: Request):
                 row = await cur.fetchone()
 
         dispatch_id = int(row[0])
-        ai_analysis = await analyze_dispatch_vehicle(dispatch_id) if uploaded_urls else {"status": "no_photos"}
+        if uploaded_urls:
+            background_tasks.add_task(analyze_dispatch_vehicle, dispatch_id)
+        ai_analysis = {"status": "queued"} if uploaded_urls else {"status": "no_photos"}
 
         return JSONResponse(
             {
@@ -470,7 +472,7 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
 # ATTACH PHOTO TO EXISTING DISPATCH
 # =========================
 @router.post("/dispatch/{dispatch_id}/photo")
-async def attach_photo(dispatch_id: int, request: Request):
+async def attach_photo(dispatch_id: int, request: Request, background_tasks: BackgroundTasks):
     """
     Adjunta/actualiza una foto para un despacho existente.
 
@@ -583,7 +585,8 @@ async def attach_photo(dispatch_id: int, request: Request):
                     detail="dispatch not found",
                 )
 
-    ai_analysis = await analyze_dispatch_vehicle(dispatch_id)
+    background_tasks.add_task(analyze_dispatch_vehicle, dispatch_id)
+    ai_analysis = {"status": "queued"}
 
     return JSONResponse(
         {
