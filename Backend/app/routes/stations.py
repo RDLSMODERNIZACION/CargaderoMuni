@@ -34,6 +34,11 @@ class StationActivePatch(BaseModel):
     active: bool
 
 
+class StationPatch(BaseModel):
+    name: Optional[str] = None
+    active: Optional[bool] = None
+
+
 # --------- Helpers ---------
 def _row_to_out(row) -> StationOut:
     # row: (id, name, active)
@@ -115,3 +120,80 @@ async def set_station_active(
     if not row:
         raise HTTPException(status_code=404, detail=f"Station '{station_id}' no encontrada")
     return _row_to_out(row)
+
+
+@router.patch("/{station_id}", response_model=StationOut)
+async def update_station(
+    patch: StationPatch,
+    station_id: str = Path(..., min_length=1),
+):
+    fields = []
+    params = []
+
+    if patch.name is not None:
+        fields.append("name = %s")
+        params.append(patch.name)
+    if patch.active is not None:
+        fields.append("active = %s")
+        params.append(patch.active)
+
+    if not fields:
+        raise HTTPException(status_code=400, detail="No hay campos para actualizar")
+
+    params.append(station_id)
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                UPDATE public.station
+                   SET {", ".join(fields)}
+                 WHERE id = %s
+             RETURNING id, name, active;
+                """,
+                tuple(params),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Station '{station_id}' no encontrada")
+
+    return _row_to_out(row)
+
+
+@router.delete("/{station_id}")
+async def delete_station(station_id: str = Path(..., min_length=1)):
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM public.water_dispatch WHERE station_id = %s) AS dispatches,
+                  (SELECT COUNT(*) FROM public.access_event WHERE station_id = %s) AS access_events,
+                  (SELECT COUNT(*) FROM public.access_credential WHERE station_id = %s) AS credentials
+                """,
+                (station_id, station_id, station_id),
+            )
+            counts = await cur.fetchone()
+
+            if counts and any(int(v or 0) > 0 for v in counts):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "La estación tiene historial asociado. Desactivala en lugar de eliminarla.",
+                        "dispatches": int(counts[0] or 0),
+                        "access_events": int(counts[1] or 0),
+                        "credentials": int(counts[2] or 0),
+                    },
+                )
+
+            await cur.execute(
+                "DELETE FROM public.station WHERE id = %s RETURNING id;",
+                (station_id,),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Station '{station_id}' no encontrada")
+
+    return {"ok": True, "id": station_id}
