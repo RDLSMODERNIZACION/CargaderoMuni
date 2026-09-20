@@ -10,6 +10,7 @@ if not DSN:
 
 # Parámetros de conexión
 CONNECT_KW = dict(
+    prepare_threshold=None,
     connect_timeout=5,
     keepalives=1,
     keepalives_idle=30,
