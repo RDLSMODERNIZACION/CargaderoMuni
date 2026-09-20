@@ -21,6 +21,18 @@ type VehicleAI = {
   photo_count?: number;
 };
 
+type Station = { id: string; name?: string | null; active: boolean };
+type Company = { id: number; name: string; code?: string | null; active: boolean };
+
+type EditForm = {
+  station_id: string;
+  company_id: string;
+  liters: string;
+  flow_l_min: string;
+  ts: string;
+  note: string;
+};
+
 type DispatchDetail = {
   id: number;
   ts: string;
@@ -60,6 +72,12 @@ function pct(value?: number | null) {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
+function toDateTimeLocal(iso: string) {
+  const d = new Date(iso);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function StatusPill({ ok, children }: { ok?: boolean | null; children: React.ReactNode }) {
   const cls =
     ok === true
@@ -84,6 +102,18 @@ export default function DispatchDetailPage() {
   const [loading, setLoading] = useState(true);
   const [aiLoading, setAiLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [editOpen, setEditOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState<EditForm>({
+    station_id: "",
+    company_id: "",
+    liters: "",
+    flow_l_min: "",
+    ts: "",
+    note: "",
+  });
 
   const photos = useMemo(() => getPhotoUrls(item), [item]);
   const ai = item?.ai_vehicle_analysis || {};
@@ -103,6 +133,78 @@ export default function DispatchDetailPage() {
       setError(e?.message ?? "No se pudo cargar el despacho");
     } finally {
       setLoading(false);
+    }
+  }
+
+
+  async function loadMeta() {
+    try {
+      const [st, co] = await Promise.all([
+        apiJSON<Station[]>("/stations"),
+        apiJSON<{ ok: boolean; items: Company[] }>("/company?active=false"),
+      ]);
+      setStations(Array.isArray(st) ? st : []);
+      setCompanies(Array.isArray(co?.items) ? co.items : []);
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudieron cargar estaciones/empresas");
+    }
+  }
+
+  function openEdit() {
+    if (!item) return;
+    setEditForm({
+      station_id: item.station_id,
+      company_id: item.company_id != null ? String(item.company_id) : "",
+      liters: item.liters != null ? String(item.liters) : "",
+      flow_l_min: item.flow_l_min != null ? String(item.flow_l_min) : "",
+      ts: item.ts ? toDateTimeLocal(item.ts) : "",
+      note: item.note || "",
+    });
+    setEditOpen(true);
+  }
+
+  async function saveEdit() {
+    if (!item || !editForm.station_id || !editForm.company_id) {
+      setError("Seleccioná estación y empresa.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await apiJSON("/water/dispatch/" + item.id, {
+        method: "PATCH",
+        body: JSON.stringify({
+          station_id: editForm.station_id,
+          company_id: Number(editForm.company_id),
+          liters: editForm.liters === "" ? null : Number(editForm.liters),
+          flow_l_min: editForm.flow_l_min === "" ? null : Number(editForm.flow_l_min),
+          ts: editForm.ts ? new Date(editForm.ts).toISOString() : item.ts,
+          note: editForm.note,
+        }),
+      });
+      setEditOpen(false);
+      await load();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo editar el despacho");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeDispatch() {
+    if (!item) return;
+    const ok = window.confirm(
+      "¿Eliminar definitivamente el despacho #" + item.id + "?\n\nEsta acción no se puede deshacer."
+    );
+    if (!ok) return;
+
+    setError(null);
+    try {
+      await apiJSON("/water/dispatch/" + item.id, { method: "DELETE" });
+      router.push("/admin/dispatches");
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo eliminar el despacho");
     }
   }
 
@@ -129,6 +231,7 @@ export default function DispatchDetailPage() {
 
   useEffect(() => {
     load();
+    loadMeta();
   }, [dispatchId]);
 
   if (loading) {
@@ -405,9 +508,21 @@ export default function DispatchDetailPage() {
           </p>
         </div>
 
-        <button className="btn btn-secondary" onClick={load}>
-          Actualizar
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button className="btn btn-secondary" onClick={load}>
+            Actualizar
+          </button>
+          <button className="btn btn-secondary" onClick={openEdit}>
+            Editar
+          </button>
+          <button
+            className="btn"
+            onClick={removeDispatch}
+            style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+          >
+            Eliminar
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -419,6 +534,104 @@ export default function DispatchDetailPage() {
       <section className="card">
         <Tabs tabs={tabs} defaultTab="resumen" />
       </section>
+
+      {editOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-2xl p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">Editar despacho #{item.id}</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Modificá los datos administrativos del despacho.
+                </p>
+              </div>
+              <button className="btn btn-secondary" onClick={() => setEditOpen(false)} disabled={saving}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Estación</label>
+                <select
+                  className="select"
+                  value={editForm.station_id}
+                  onChange={(e) => setEditForm((p) => ({ ...p, station_id: e.target.value }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {stations.map((st) => (
+                    <option key={st.id} value={st.id}>{st.name || st.id}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Empresa</label>
+                <select
+                  className="select"
+                  value={editForm.company_id}
+                  onChange={(e) => setEditForm((p) => ({ ...p, company_id: e.target.value }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {companies.map((co) => (
+                    <option key={co.id} value={String(co.id)}>{co.name || co.code || co.id}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Litros</label>
+                <input
+                  type="number"
+                  min="0"
+                  className="input"
+                  value={editForm.liters}
+                  onChange={(e) => setEditForm((p) => ({ ...p, liters: e.target.value }))}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Caudal L/min</label>
+                <input
+                  type="number"
+                  min="0"
+                  className="input"
+                  value={editForm.flow_l_min}
+                  onChange={(e) => setEditForm((p) => ({ ...p, flow_l_min: e.target.value }))}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 md:col-span-2">
+                <label className="text-xs text-slate-500">Fecha y hora</label>
+                <input
+                  type="datetime-local"
+                  className="input"
+                  value={editForm.ts}
+                  onChange={(e) => setEditForm((p) => ({ ...p, ts: e.target.value }))}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1 md:col-span-2">
+                <label className="text-xs text-slate-500">Nota</label>
+                <textarea
+                  className="input min-h-[90px]"
+                  value={editForm.note}
+                  onChange={(e) => setEditForm((p) => ({ ...p, note: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button className="btn btn-secondary" onClick={() => setEditOpen(false)} disabled={saving}>
+                Cancelar
+              </button>
+              <button className="btn" onClick={saveEdit} disabled={saving}>
+                {saving ? "Guardando…" : "Guardar cambios"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
