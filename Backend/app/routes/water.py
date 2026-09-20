@@ -93,7 +93,7 @@ def _normalize_photo_paths(value: Any, fallback_photo: Optional[str] = None) -> 
 # =========================
 class StartDispatchIn(BaseModel):
     station_id: str = Field(..., examples=["1"])
-    company_code: str = Field(..., examples=["1"])
+    company_code: Optional[str] = Field(None, examples=["1"])
     photo_path: Optional[str] = Field(None, examples=["https://storage/snap.jpg"])
     note: Optional[str] = Field(
         "despacho iniciado manual",
@@ -167,35 +167,37 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
         note = str(form.get("note") or "despacho iniciado por trigger").strip()
         suffix = str(form.get("suffix") or "start").strip()
 
-        if not station_id or not company_code:
+        if not station_id:
             raise HTTPException(
                 status_code=422,
-                detail="station_id and company_code are required (multipart)",
+                detail="station_id is required (multipart)",
             )
 
-        # Buscar empresa activa por code.
-        # IMPORTANTE:
-        # Node-RED manda company_code desde employeeNoString del Hikvision.
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    SELECT id
-                    FROM public.company
-                    WHERE code = %s
-                      AND active
-                    """,
-                    (company_code,),
-                )
-                r = await cur.fetchone()
-
-                if not r:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="company not found or inactive",
+        # company_code es opcional:
+        # - con PIN: se resuelve empresa activa por code;
+        # - arranque manual de bomba: queda company_id = NULL.
+        company_id = None
+        if company_code:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT id
+                        FROM public.company
+                        WHERE code = %s
+                          AND active
+                        """,
+                        (company_code,),
                     )
+                    r = await cur.fetchone()
 
-                company_id = int(r[0])
+                    if not r:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="company not found or inactive",
+                        )
+
+                    company_id = int(r[0])
 
         # Aceptamos varios nombres de archivo desde Node-RED.
         # Tu flujo manda:
@@ -300,25 +302,29 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT id
-                FROM public.company
-                WHERE code = %s
-                  AND active
-                """,
-                (payload.company_code,),
-            )
+            company_id = None
+            company_code = (payload.company_code or "").strip()
 
-            r = await cur.fetchone()
-
-            if not r:
-                raise HTTPException(
-                    status_code=404,
-                    detail="company not found or inactive",
+            if company_code:
+                await cur.execute(
+                    """
+                    SELECT id
+                    FROM public.company
+                    WHERE code = %s
+                      AND active
+                    """,
+                    (company_code,),
                 )
 
-            company_id = int(r[0])
+                r = await cur.fetchone()
+
+                if not r:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="company not found or inactive",
+                    )
+
+                company_id = int(r[0])
 
             photo_paths = [payload.photo_path] if payload.photo_path else []
 
@@ -350,7 +356,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
         "id": dispatch_id,
         "ts": row[1].isoformat() if row and row[1] else None,
         "station_id": payload.station_id,
-        "company_code": payload.company_code,
+        "company_code": company_code or None,
         "company_id": company_id,
         "photo_path": payload.photo_path,
         "photo_paths": photo_paths,
