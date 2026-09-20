@@ -96,7 +96,6 @@ export default function UsersPage() {
   const columns: Column<Company>[] = [
     { key: "id", header: "ID", width: "70px" },
     { key: "name", header: "Empresa" },
-    { key: "code", header: "Código" },
     {
       key: "pin",
       header: "PIN",
@@ -242,7 +241,7 @@ export default function UsersPage() {
             <label className="text-xs text-slate-500">Buscar</label>
             <input
               className="input"
-              placeholder="Empresa / código / ID..."
+              placeholder="Empresa / ID..."
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
