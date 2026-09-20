@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { apiJSON } from "../../../lib/api/api";
 import { fmtLiters } from "../../../lib/utils";
@@ -411,7 +412,7 @@ export default function ReportsPage() {
                     <tr
                       key={r.id}
                       className="cursor-pointer hover:bg-slate-50"
-                      onClick={() => router.push(`/admin/dispatches/${r.id}`)}
+                      onClick={() => router.push((`/admin/dispatches/${r.id}`) as Route)}
                     >
                       <td className="font-medium">{r.local_time || "—"}</td>
                       <td>{r.company_name || r.company_code || "—"}</td>
@@ -424,7 +425,7 @@ export default function ReportsPage() {
                           className="text-sky-700 font-medium hover:underline"
                           onClick={(e) => {
                             e.stopPropagation();
-                            router.push(`/admin/dispatches/${r.id}`);
+                            router.push((`/admin/dispatches/${r.id}`) as Route);
                           }}
                         >
                           #{r.id}
