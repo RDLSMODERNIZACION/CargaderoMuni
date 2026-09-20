@@ -177,7 +177,7 @@ async def update_station(
                 UPDATE public.station
                    SET {", ".join(fields)}
                  WHERE id = %s
-             RETURNING id, name, active;
+             RETURNING id, name, active, device_ip, device_model, device_serial;
                 """,
                 tuple(params),
             )
