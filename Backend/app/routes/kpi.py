@@ -319,7 +319,7 @@ async def kpi_daily(
 
     sql = f"""
         SELECT
-          date_trunc('day', wd.ts)::date AS day,
+          (wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS day,
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
           COUNT(*)::bigint AS dispatch_count
         FROM public.water_dispatch wd
@@ -368,7 +368,7 @@ async def kpi_by_hour(
 
     sql = f"""
         SELECT
-          EXTRACT(HOUR FROM wd.ts)::int AS hour,
+          EXTRACT(HOUR FROM wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::int AS hour,
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
           COUNT(*)::bigint AS dispatch_count
         FROM public.water_dispatch wd
@@ -399,5 +399,77 @@ async def kpi_by_hour(
                 "dispatch_count": by_hour.get(hour, {}).get("dispatch_count", 0),
             }
             for hour in range(24)
+        ],
+    }
+
+
+# -----------------------------
+# KPI: Dispatches for one local day
+# -----------------------------
+@router.get("/day_dispatches")
+async def kpi_day_dispatches(
+    date: str = Query(..., description="Fecha local YYYY-MM-DD"),
+    station_id: Optional[str] = None,
+    company_id: Optional[int] = None,
+):
+    where = [
+        "(wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = %s::date"
+    ]
+    params: List[Any] = [date]
+
+    if station_id:
+        where.append("wd.station_id = %s")
+        params.append(station_id)
+
+    if company_id is not None:
+        where.append("wd.company_id = %s")
+        params.append(company_id)
+
+    sql = f"""
+        SELECT
+          wd.id,
+          wd.ts,
+          to_char(
+            wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires',
+            'HH24:MI'
+          ) AS local_time,
+          wd.station_id,
+          s.name AS station_name,
+          wd.company_id,
+          c.name AS company_name,
+          c.code AS company_code,
+          COALESCE(wd.liters, 0) AS liters,
+          wd.ai_vehicle_analysis ->> 'plate' AS plate,
+          wd.note
+        FROM public.water_dispatch wd
+        LEFT JOIN public.company c ON c.id = wd.company_id
+        LEFT JOIN public.station s ON s.id = wd.station_id
+        WHERE {" AND ".join(where)}
+        ORDER BY wd.ts ASC
+    """
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+
+    return {
+        "ok": True,
+        "date": date,
+        "items": [
+            {
+                "id": r[0],
+                "ts": r[1].isoformat() if r[1] else None,
+                "local_time": r[2],
+                "station_id": r[3],
+                "station_name": r[4] or r[3],
+                "company_id": r[5],
+                "company_name": r[6],
+                "company_code": r[7],
+                "liters": float(r[8] or 0),
+                "plate": r[9],
+                "note": r[10],
+            }
+            for r in rows
         ],
     }
