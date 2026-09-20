@@ -319,7 +319,7 @@ async def kpi_daily(
 
     sql = f"""
         SELECT
-          date_trunc('day', wd.ts)::date AS day,
+          (wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AS day,
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
           COUNT(*)::bigint AS dispatch_count
         FROM public.water_dispatch wd
@@ -368,7 +368,7 @@ async def kpi_by_hour(
 
     sql = f"""
         SELECT
-          EXTRACT(HOUR FROM wd.ts)::int AS hour,
+          EXTRACT(HOUR FROM wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::int AS hour,
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
           COUNT(*)::bigint AS dispatch_count
         FROM public.water_dispatch wd
