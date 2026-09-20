@@ -99,7 +99,21 @@ async def kpi_summary(
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS total_liters,
           COUNT(*)::bigint AS dispatch_count,
           COUNT(DISTINCT wd.company_id)::bigint AS companies_count,
-          COUNT(DISTINCT wd.station_id)::bigint AS stations_count
+          COUNT(DISTINCT wd.station_id)::bigint AS stations_count,
+          CASE WHEN COUNT(*) > 0
+            THEN COALESCE(SUM(COALESCE(wd.liters, 0)), 0) / COUNT(*)
+            ELSE 0
+          END AS avg_liters_per_dispatch,
+          COALESCE(MAX(COALESCE(wd.liters, 0)), 0) AS max_dispatch_liters,
+          COUNT(*) FILTER (
+            WHERE COALESCE(wd.ai_vehicle_analysis ->> 'plate', '') <> ''
+          )::bigint AS ai_plate_count,
+          COUNT(*) FILTER (
+            WHERE (wd.ai_vehicle_analysis ->> 'matches_expected_company') = 'true'
+          )::bigint AS ai_company_match_count,
+          COUNT(*) FILTER (
+            WHERE (wd.ai_vehicle_analysis ->> 'matches_expected_company') = 'false'
+          )::bigint AS ai_company_mismatch_count
         FROM public.water_dispatch wd
         {where_sql}
     """
@@ -121,6 +135,11 @@ async def kpi_summary(
         "dispatch_count": int(row[1] or 0),
         "companies_count": int(row[2] or 0),
         "stations_count": int(row[3] or 0),
+        "avg_liters_per_dispatch": float(row[4] or 0),
+        "max_dispatch_liters": float(row[5] or 0),
+        "ai_plate_count": int(row[6] or 0),
+        "ai_company_match_count": int(row[7] or 0),
+        "ai_company_mismatch_count": int(row[8] or 0),
     }
 
 
@@ -275,4 +294,110 @@ async def kpi_by_station(
             "top": top,
         },
         "items": items,
+    }
+
+
+# -----------------------------
+# KPI: Daily trend
+# -----------------------------
+@router.get("/daily")
+async def kpi_daily(
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    station_id: Optional[str] = None,
+    company_id: Optional[int] = None,
+):
+    dt_from = _parse_dt(from_ts)
+    dt_to = _parse_dt(to_ts)
+
+    where_sql, params = _build_where(
+        dt_from=dt_from,
+        dt_to=dt_to,
+        station_id=station_id,
+        company_id=company_id,
+    )
+
+    sql = f"""
+        SELECT
+          date_trunc('day', wd.ts)::date AS day,
+          COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
+          COUNT(*)::bigint AS dispatch_count
+        FROM public.water_dispatch wd
+        {where_sql}
+        GROUP BY 1
+        ORDER BY 1
+    """
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+
+    return {
+        "ok": True,
+        "items": [
+            {
+                "day": r[0].isoformat(),
+                "liters": float(r[1] or 0),
+                "dispatch_count": int(r[2] or 0),
+            }
+            for r in rows
+        ],
+    }
+
+
+# -----------------------------
+# KPI: Usage by hour of day
+# -----------------------------
+@router.get("/by_hour")
+async def kpi_by_hour(
+    from_ts: Optional[str] = Query(None, alias="from"),
+    to_ts: Optional[str] = Query(None, alias="to"),
+    station_id: Optional[str] = None,
+    company_id: Optional[int] = None,
+):
+    dt_from = _parse_dt(from_ts)
+    dt_to = _parse_dt(to_ts)
+
+    where_sql, params = _build_where(
+        dt_from=dt_from,
+        dt_to=dt_to,
+        station_id=station_id,
+        company_id=company_id,
+    )
+
+    sql = f"""
+        SELECT
+          EXTRACT(HOUR FROM wd.ts)::int AS hour,
+          COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
+          COUNT(*)::bigint AS dispatch_count
+        FROM public.water_dispatch wd
+        {where_sql}
+        GROUP BY 1
+        ORDER BY 1
+    """
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+
+    by_hour = {
+        int(r[0]): {
+            "liters": float(r[1] or 0),
+            "dispatch_count": int(r[2] or 0),
+        }
+        for r in rows
+    }
+
+    return {
+        "ok": True,
+        "items": [
+            {
+                "hour": hour,
+                "liters": by_hour.get(hour, {}).get("liters", 0),
+                "dispatch_count": by_hour.get(hour, {}).get("dispatch_count", 0),
+            }
+            for hour in range(24)
+        ],
     }
