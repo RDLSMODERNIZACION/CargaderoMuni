@@ -26,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 />
                 <div>
                   <div className="text-lg font-bold tracking-wide text-slate-900">DIRAC</div>
-                  <div className="text-xs text-slate-500">Panel de Administración</div>
+                  <div className="text-xs text-slate-500">Cargaderos de Agua</div>
                 </div>
               </div>
             </div>
