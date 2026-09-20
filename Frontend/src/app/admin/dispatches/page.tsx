@@ -11,6 +11,20 @@ const Tabs = dynamic(() => import("../../../components/Tabs"), { ssr: false }) a
 
 type Column<T> = any;
 
+type VehicleAI = {
+  status?: string;
+  plate?: string | null;
+  plate_confidence?: number;
+  company_visible?: string | null;
+  company_confidence?: number;
+  matches_expected_company?: boolean | null;
+  match_confidence?: number;
+  vehicle_type?: string | null;
+  visible_text?: string[];
+  notes?: string | null;
+  model?: string;
+};
+
 type DispatchItem = {
   id: number;
   ts: string;
@@ -29,6 +43,7 @@ type DispatchItem = {
   company_id?: number | null;
   company_name?: string | null;
   company_code?: string | null;
+  ai_vehicle_analysis?: VehicleAI | null;
 };
 
 type Station = { id: string; name?: string | null; active: boolean };
@@ -99,6 +114,7 @@ export default function DispatchesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const selected = useMemo(() => rows.find((r) => r.id === selectedId) || null, [rows, selectedId]);
   const selectedPhotos = useMemo(() => getPhotoUrls(selected), [selected]);
 
@@ -153,6 +169,32 @@ export default function DispatchesPage() {
       setError(e?.message ?? "Error cargando estaciones");
     } finally {
       setLoadingMeta(false);
+    }
+  }
+
+  async function reanalyzeSelected() {
+    if (!selected) return;
+
+    setAiLoading(true);
+    setError(null);
+
+    try {
+      const res = await apiJSON<{ ok: boolean; dispatch_id: number; analysis: VehicleAI }>(
+        `/ai/vehicle/dispatch/${selected.id}`,
+        { method: "POST" }
+      );
+
+      setRows((prev) =>
+        prev.map((row) =>
+          row.id === selected.id
+            ? { ...row, ai_vehicle_analysis: res.analysis }
+            : row
+        )
+      );
+    } catch (e: any) {
+      setError(e?.message ?? "Error analizando fotos con IA");
+    } finally {
+      setAiLoading(false);
     }
   }
 
@@ -214,6 +256,11 @@ export default function DispatchesPage() {
       key: "company",
       header: "Empresa",
       render: (r: DispatchItem) => r.company_name || r.company_code || "—",
+    },
+    {
+      key: "plate",
+      header: "Patente IA",
+      render: (r: DispatchItem) => r.ai_vehicle_analysis?.plate || "—",
     },
     {
       key: "liters",
@@ -343,6 +390,40 @@ export default function DispatchesPage() {
 
                     <div>
                       <b>Empresa:</b> {selected.company_name || selected.company_code || "—"}
+                    </div>
+
+                    <div>
+                      <b>Patente detectada:</b> {selected.ai_vehicle_analysis?.plate || "—"}
+                      {selected.ai_vehicle_analysis?.plate_confidence != null
+                        ? ` (${Math.round(selected.ai_vehicle_analysis.plate_confidence * 100)}%)`
+                        : ""}
+                    </div>
+
+                    <div>
+                      <b>Empresa visible en camión:</b> {selected.ai_vehicle_analysis?.company_visible || "—"}
+                    </div>
+
+                    <div>
+                      <b>Control empresa:</b>{" "}
+                      {selected.ai_vehicle_analysis?.matches_expected_company === true
+                        ? "Coincide con la empresa del PIN"
+                        : selected.ai_vehicle_analysis?.matches_expected_company === false
+                        ? "No coincide con la empresa del PIN"
+                        : "Sin evidencia suficiente"}
+                    </div>
+
+                    <div>
+                      <b>Estado IA:</b> {selected.ai_vehicle_analysis?.status || "Sin analizar"}
+                    </div>
+
+                    <div>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={reanalyzeSelected}
+                        disabled={aiLoading || selectedPhotos.length === 0}
+                      >
+                        {aiLoading ? "Analizando…" : "Reanalizar fotos con IA"}
+                      </button>
                     </div>
 
                     <div>
