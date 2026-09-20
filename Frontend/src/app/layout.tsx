@@ -2,7 +2,7 @@ import "./globals.css";
 import Link from "next/link";
 
 export const metadata = {
-  title: "Cargadero · Admin",
+  title: "DIRAC",
   description: "Panel de administración del cargadero",
 };
 
@@ -12,9 +12,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="min-h-screen grid grid-cols-[220px_1fr]">
           <aside className="border-r border-slate-200 p-4 space-y-4 bg-white">
-            {/* Header sin ícono */}
-            <div className="font-semibold text-slate-800">
-              Panel de Administracion
+            <div className="border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-3">
+                <img
+                  src="https://raw.githubusercontent.com/RDLSMODERNIZACION/DiracInstrumentacion/main/FrontEnd/App_Principal/public/img/logodirac.jpeg"
+                  alt="DIRAC"
+                  className="h-10 w-10 rounded-lg object-contain bg-white"
+                />
+                <div>
+                  <div className="text-lg font-bold tracking-wide text-slate-900">DIRAC</div>
+                  <div className="text-xs text-slate-500">Panel de Administración</div>
+                </div>
+              </div>
             </div>
 
             <nav className="flex flex-col gap-1">
