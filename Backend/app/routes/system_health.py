@@ -32,6 +32,18 @@ class DeviceHeartbeat(BaseModel):
 async def heartbeat(body: DeviceHeartbeat):
     now = datetime.now(timezone.utc)
 
+    # device_id debe ser único por estación. Los distintos Node-RED usan
+    # nombres lógicos iguales (teclado, camara_2, plc_cargadero, node_red).
+    # Prefijarlos acá evita que una estación pise el estado de otra.
+    station_id = (body.station_id or "").strip() or None
+    raw_device_id = body.device_id.strip()
+    prefix = f"{station_id}:" if station_id else ""
+    device_id = (
+        raw_device_id
+        if not prefix or raw_device_id.startswith(prefix)
+        else prefix + raw_device_id
+    )
+
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -40,12 +52,12 @@ async def heartbeat(body: DeviceHeartbeat):
                 FROM public.system_device_health
                 WHERE device_id = %s
                 """,
-                (body.device_id,),
+                (device_id,),
             )
             existing = await cur.fetchone()
             previous_status = existing[0] if existing else None
             previous_station_id = existing[1] if existing else None
-            station_id = body.station_id or previous_station_id
+            station_id = station_id or previous_station_id
 
             await cur.execute(
                 """
@@ -66,7 +78,7 @@ async def heartbeat(body: DeviceHeartbeat):
                     metadata = EXCLUDED.metadata
                 """,
                 (
-                    body.device_id,
+                    device_id,
                     body.device_type,
                     body.name,
                     body.ip,
@@ -89,7 +101,7 @@ async def heartbeat(body: DeviceHeartbeat):
                         (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        body.device_id,
+                        device_id,
                         body.device_type,
                         body.name,
                         body.ip,
@@ -103,7 +115,7 @@ async def heartbeat(body: DeviceHeartbeat):
 
     return {
         "ok": True,
-        "device_id": body.device_id,
+        "device_id": device_id,
         "station_id": station_id,
         "status": body.status,
     }
