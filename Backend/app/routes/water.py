@@ -474,6 +474,74 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
 
 
 # =========================
+# DISPATCH DETAIL
+# =========================
+@router.get("/dispatch/{dispatch_id}")
+async def get_dispatch(dispatch_id: int):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    wd.id,
+                    wd.ts,
+                    wd.station_id,
+                    s.name AS station_name,
+                    wd.liters,
+                    wd.flow_l_min,
+                    wd.photo_path,
+                    wd.photo_paths,
+                    wd.note,
+                    wd.ai_vehicle_analysis,
+                    wd.billing_status,
+                    wd.price_per_m3,
+                    wd.amount,
+                    wd.max_affordable_liters,
+                    wd.debited_at,
+                    c.id AS company_id,
+                    c.name AS company_name,
+                    c.code AS company_code
+                FROM public.water_dispatch wd
+                LEFT JOIN public.company c ON c.id = wd.company_id
+                LEFT JOIN public.station s ON s.id = wd.station_id
+                WHERE wd.id = %s
+                """,
+                (dispatch_id,),
+            )
+            r = await cur.fetchone()
+
+    if not r:
+        raise HTTPException(status_code=404, detail="dispatch not found")
+
+    photo_path = r[6]
+    photo_paths = _normalize_photo_paths(r[7], fallback_photo=photo_path)
+
+    return {
+        "ok": True,
+        "item": {
+            "id": r[0],
+            "ts": r[1].isoformat() if r[1] else None,
+            "station_id": r[2],
+            "station_name": r[3],
+            "liters": r[4],
+            "flow_l_min": r[5],
+            "photo_path": photo_path,
+            "photo_paths": photo_paths,
+            "note": r[8],
+            "ai_vehicle_analysis": r[9] or {},
+            "billing_status": r[10],
+            "price_per_m3": r[11],
+            "amount": r[12],
+            "max_affordable_liters": r[13],
+            "debited_at": r[14].isoformat() if r[14] else None,
+            "company_id": r[15],
+            "company_name": r[16],
+            "company_code": r[17],
+        },
+    }
+
+
+# =========================
 # ATTACH PHOTO TO EXISTING DISPATCH
 # =========================
 @router.post("/dispatch/{dispatch_id}/photo")

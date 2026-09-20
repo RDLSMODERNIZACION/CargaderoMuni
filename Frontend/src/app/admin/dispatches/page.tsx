@@ -2,27 +2,16 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
 import { apiJSON } from "../../../lib/api/api";
 
 const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
-const Drawer = dynamic(() => import("../../../components/Drawer"), { ssr: false }) as any;
-const Tabs = dynamic(() => import("../../../components/Tabs"), { ssr: false }) as any;
 
 type Column<T> = any;
 
 type VehicleAI = {
-  status?: string;
   plate?: string | null;
-  plate_confidence?: number;
-  company_visible?: string | null;
-  company_confidence?: number;
-  matches_expected_company?: boolean | null;
-  match_confidence?: number;
-  vehicle_type?: string | null;
-  visible_text?: string[];
-  notes?: string | null;
-  model?: string;
 };
 
 type DispatchItem = {
@@ -30,16 +19,8 @@ type DispatchItem = {
   ts: string;
   station_id: string;
   liters: number | null;
-  flow_l_min?: number | null;
-
-  // Compatibilidad vieja: primera foto
   photo_path?: string | null;
-
-  // Nuevo: todas las fotos
   photo_paths?: string[] | null;
-
-  note?: string | null;
-
   company_id?: number | null;
   company_name?: string | null;
   company_code?: string | null;
@@ -52,75 +33,31 @@ function norm(s?: string | null) {
   return (s ?? "").trim().toLowerCase();
 }
 
-function safeFileNameFromUrl(url: string) {
-  try {
-    const u = new URL(url);
-    const last = u.pathname.split("/").filter(Boolean).pop() || "foto.jpg";
-    return decodeURIComponent(last);
-  } catch {
-    return "foto.jpg";
-  }
-}
-
-function withCacheBust(url: string, id: number, index: number) {
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}v=${id}_${index}`;
-}
-
-function getPhotoUrls(item: DispatchItem | null): string[] {
-  if (!item) return [];
-
-  const urls: string[] = [];
-
+function photoCount(item: DispatchItem) {
+  const urls = new Set<string>();
   if (Array.isArray(item.photo_paths)) {
-    for (const p of item.photo_paths) {
-      if (typeof p === "string" && p.trim()) {
-        urls.push(p.trim());
-      }
-    }
+    item.photo_paths.forEach((p) => {
+      if (typeof p === "string" && p.trim()) urls.add(p.trim());
+    });
   }
-
-  // Compatibilidad con registros viejos que solo tienen photo_path
-  if (item.photo_path && item.photo_path.trim()) {
-    urls.push(item.photo_path.trim());
-  }
-
-  // Quitar duplicados manteniendo orden
-  return Array.from(new Set(urls));
-}
-
-function photoLabel(index: number) {
-  if (index === 0) return "Foto 1 · Teclado";
-  if (index === 1) return "Foto 2 · Cámara 2";
-  if (index === 2) return "Foto 3 · Cámara 3";
-  return `Foto ${index + 1}`;
+  if (item.photo_path?.trim()) urls.add(item.photo_path.trim());
+  return urls.size;
 }
 
 export default function DispatchesPage() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
   const [stations, setStations] = useState<Station[]>([]);
   const [rows, setRows] = useState<DispatchItem[]>([]);
-
-  // filtros
-  const [qStation, setQStation] = useState<string>(""); // "" = Todas
-  const [qCompany, setQCompany] = useState<string>(""); // "" = Todas
-  const [from, setFrom] = useState<string>("");
-  const [to, setTo] = useState<string>("");
-
+  const [qStation, setQStation] = useState("");
+  const [qCompany, setQCompany] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const selected = useMemo(() => rows.find((r) => r.id === selectedId) || null, [rows, selectedId]);
-  const selectedPhotos = useMemo(() => getPhotoUrls(selected), [selected]);
-
-  useEffect(() => {
-    if (selectedId != null && !selected) setSelectedId(null);
-  }, [selectedId, selected]);
 
   const stationNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -128,40 +65,22 @@ export default function DispatchesPage() {
     return m;
   }, [stations]);
 
-  // opciones de empresa detectadas desde los propios despachos
   const companyOptions = useMemo(() => {
     const m = new Map<string, { id: number; label: string }>();
 
     for (const r of rows) {
       if (r.company_id == null) continue;
-
       const key = String(r.company_id);
-
-      if (!m.has(key)) {
-        m.set(key, {
-          id: r.company_id,
-          label: r.company_name || r.company_code || `#${r.company_id}`,
-        });
-      } else {
-        const cur = m.get(key)!;
-        const better = r.company_name || r.company_code;
-
-        if (better && (cur.label.startsWith("#") || cur.label === String(cur.id))) {
-          cur.label = better;
-        }
-      }
+      const label = r.company_name || r.company_code || `#${r.company_id}`;
+      if (!m.has(key)) m.set(key, { id: r.company_id, label });
     }
 
-    const arr = Array.from(m.values());
-    arr.sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
-
-    return arr;
+    return Array.from(m.values()).sort((a, b) => norm(a.label).localeCompare(norm(b.label)));
   }, [rows]);
 
   async function loadStations() {
     setLoadingMeta(true);
     setError(null);
-
     try {
       const st = await apiJSON<Station[]>("/stations");
       setStations(Array.isArray(st) ? st : []);
@@ -172,32 +91,6 @@ export default function DispatchesPage() {
     }
   }
 
-  async function reanalyzeSelected() {
-    if (!selected) return;
-
-    setAiLoading(true);
-    setError(null);
-
-    try {
-      const res = await apiJSON<{ ok: boolean; dispatch_id: number; analysis: VehicleAI }>(
-        `/ai/vehicle/dispatch/${selected.id}`,
-        { method: "POST" }
-      );
-
-      setRows((prev) =>
-        prev.map((row) =>
-          row.id === selected.id
-            ? { ...row, ai_vehicle_analysis: res.analysis }
-            : row
-        )
-      );
-    } catch (e: any) {
-      setError(e?.message ?? "Error analizando fotos con IA");
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   async function loadDispatches() {
     setLoadingRows(true);
     setError(null);
@@ -205,12 +98,11 @@ export default function DispatchesPage() {
     try {
       const qs = new URLSearchParams();
       qs.set("limit", "200");
-
       if (qStation) qs.set("station_id", qStation);
-      if (qCompany) qs.set("company_id", qCompany);
 
-      const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(`/water/dispatch/recent?${qs.toString()}`);
-
+      const res = await apiJSON<{ ok: boolean; items: DispatchItem[] }>(
+        `/water/dispatch/recent?${qs.toString()}`
+      );
       setRows(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
       setError(e?.message ?? "Error cargando despachos");
@@ -228,7 +120,7 @@ export default function DispatchesPage() {
   useEffect(() => {
     if (!mounted) return;
     loadDispatches();
-  }, [mounted, qStation, qCompany, stations.length]);
+  }, [mounted, qStation]);
 
   const filtered = useMemo(() => {
     const start = from ? new Date(from).getTime() : -Infinity;
@@ -237,10 +129,8 @@ export default function DispatchesPage() {
 
     return rows.filter((d) => {
       const dt = d.ts ? new Date(d.ts).getTime() : 0;
-
       if (!(dt >= start && dt <= end)) return false;
-      if (companyId != null && (d.company_id ?? null) !== companyId) return false;
-
+      if (companyId != null && d.company_id !== companyId) return false;
       return true;
     });
   }, [rows, from, to, qCompany]);
@@ -272,35 +162,43 @@ export default function DispatchesPage() {
       key: "ts",
       header: "Fecha",
       render: (r: DispatchItem) => (r.ts ? fmtDate(r.ts) : "—"),
-      sort: (a: DispatchItem, b: DispatchItem) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+      sort: (a: DispatchItem, b: DispatchItem) =>
+        new Date(a.ts).getTime() - new Date(b.ts).getTime(),
     },
     {
       key: "photo",
       header: "Fotos",
       render: (r: DispatchItem) => {
-        const count = getPhotoUrls(r).length;
-        return count > 0 ? `${count}` : "No";
+        const count = photoCount(r);
+        return count > 0 ? String(count) : "No";
       },
     },
   ];
 
-  if (!mounted) {
-    return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
-  }
+  if (!mounted) return <div className="p-6 text-sm text-slate-500">Cargando…</div>;
 
   const loading = loadingMeta || loadingRows;
 
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Despachos</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Despachos</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Seleccioná un despacho para abrir su detalle completo.
+          </p>
+        </div>
 
         <button className="btn" onClick={loadDispatches} disabled={loading}>
           Recargar
         </button>
       </header>
 
-      {error && <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">{error}</div>}
+      {error && (
+        <div className="p-3 rounded border border-red-300 text-red-700 bg-red-50 text-sm">
+          {error}
+        </div>
+      )}
 
       <section className="card">
         <div className="grid md:grid-cols-5 gap-3">
@@ -330,12 +228,22 @@ export default function DispatchesPage() {
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Desde</label>
-            <input type="datetime-local" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <input
+              type="datetime-local"
+              className="input"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500">Hasta</label>
-            <input type="datetime-local" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+            <input
+              type="datetime-local"
+              className="input"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
           </div>
 
           <div className="flex items-end justify-end">
@@ -364,145 +272,10 @@ export default function DispatchesPage() {
             columns={columns}
             initialSortKey="ts"
             initialSortDir="desc"
-            onRowClick={(row: DispatchItem) => setSelectedId(row.id)}
-            rowClassName={(row: DispatchItem) => (selectedId === row.id ? "bg-sky-50" : "")}
+            onRowClick={(row: DispatchItem) => router.push(`/admin/dispatches/${row.id}`)}
           />
         )}
       </section>
-
-      <Drawer open={!!selected} onClose={() => setSelectedId(null)} title={selected ? `Despacho #${selected.id}` : ""}>
-        {selected && (
-          <Tabs
-            defaultTab="resumen"
-            tabs={[
-              {
-                key: "resumen",
-                label: "Resumen",
-                content: (
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <b>Estación:</b> {stationNameById.get(selected.station_id) || selected.station_id}
-                    </div>
-
-                    <div>
-                      <b>Fecha:</b> {selected.ts ? fmtDate(selected.ts) : "—"}
-                    </div>
-
-                    <div>
-                      <b>Empresa:</b> {selected.company_name || selected.company_code || "—"}
-                    </div>
-
-                    <div>
-                      <b>Patente detectada:</b> {selected.ai_vehicle_analysis?.plate || "—"}
-                      {selected.ai_vehicle_analysis?.plate_confidence != null
-                        ? ` (${Math.round(selected.ai_vehicle_analysis.plate_confidence * 100)}%)`
-                        : ""}
-                    </div>
-
-                    <div>
-                      <b>Empresa visible en camión:</b> {selected.ai_vehicle_analysis?.company_visible || "—"}
-                    </div>
-
-                    <div>
-                      <b>Control empresa:</b>{" "}
-                      {selected.ai_vehicle_analysis?.matches_expected_company === true
-                        ? "Coincide con la empresa del PIN"
-                        : selected.ai_vehicle_analysis?.matches_expected_company === false
-                        ? "No coincide con la empresa del PIN"
-                        : "Sin evidencia suficiente"}
-                    </div>
-
-                    <div>
-                      <b>Estado IA:</b> {selected.ai_vehicle_analysis?.status || "Sin analizar"}
-                    </div>
-
-                    <div>
-                      <button
-                        className="btn btn-secondary"
-                        onClick={reanalyzeSelected}
-                        disabled={aiLoading || selectedPhotos.length === 0}
-                      >
-                        {aiLoading ? "Analizando…" : "Reanalizar fotos con IA"}
-                      </button>
-                    </div>
-
-                    <div>
-                      <b>Litros:</b> {fmtLiters(selected.liters ?? 0)}
-                    </div>
-
-                    <div>
-                      <b>Nota:</b> {selected.note || "—"}
-                    </div>
-
-                    <div>
-                      <b>Fotos:</b> {selectedPhotos.length > 0 ? selectedPhotos.length : "No"}
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                key: "fotos",
-                label: "Fotos",
-                badge: (
-                  <span className="badge bg-slate-100 text-slate-700">
-                    {selectedPhotos.length.toString()}
-                  </span>
-                ),
-                content: (
-                  <div className="space-y-3">
-                    {selectedPhotos.length > 0 ? (
-                      selectedPhotos.map((photoUrl, index) => (
-                        <div key={`${selected.id}_${index}_${photoUrl}`} className="card">
-                          <div className="flex items-center justify-between gap-2 mb-2">
-                            <div>
-                              <div className="text-xs text-slate-500">Vista previa</div>
-                              <div className="text-sm font-semibold text-slate-700">{photoLabel(index)}</div>
-                            </div>
-
-                            <span className="badge bg-slate-100 text-slate-700">
-                              {index + 1} / {selectedPhotos.length}
-                            </span>
-                          </div>
-
-                          <a
-                            href={photoUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-block w-full"
-                            title="Abrir en nueva pestaña"
-                          >
-                            <img
-                              src={withCacheBust(photoUrl, selected.id, index)}
-                              alt={`Foto ${index + 1} despacho ${selected.id}`}
-                              className="w-full max-h-[60vh] object-contain rounded-lg border bg-white"
-                              loading="lazy"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).style.display = "none";
-                              }}
-                            />
-                          </a>
-
-                          <div className="mt-3 flex items-center gap-2">
-                            <a href={photoUrl} target="_blank" rel="noreferrer" className="btn btn-secondary">
-                              Abrir
-                            </a>
-
-                            <a href={photoUrl} download={safeFileNameFromUrl(photoUrl)} className="btn btn-secondary">
-                              Descargar
-                            </a>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="card text-sm text-slate-500">Sin fotos</div>
-                    )}
-                  </div>
-                ),
-              },
-            ]}
-          />
-        )}
-      </Drawer>
     </div>
   );
 }
