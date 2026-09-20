@@ -9,7 +9,6 @@ const navItems = [
   { href: "/admin/users", label: "Empresas" },
   { href: "/admin/stations", label: "Estaciones" },
   { href: "/admin/reports", label: "KPI" },
-  { href: "/admin/system-health", label: "Estado del sistema" },
 ] as const;
 
 function Brand() {
