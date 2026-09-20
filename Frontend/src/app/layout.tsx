@@ -4,6 +4,10 @@ import Link from "next/link";
 export const metadata = {
   title: "DIRAC",
   description: "Panel de administración del cargadero",
+  icons: {
+    icon: "/cargaderosdeagua/favicon.svg",
+    shortcut: "/cargaderosdeagua/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
