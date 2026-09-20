@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from psycopg.types.json import Jsonb
 
@@ -54,6 +54,7 @@ async def _upload_bytes_to_supabase(*, data: bytes, content_type: str, object_pa
 @router.post("/dispatch/{dispatch_id}/truck")
 async def upload_truck_photo_for_dispatch(
     dispatch_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     station_id: Optional[str] = Form(None),
     suffix: str = Form("truck"),
@@ -112,7 +113,8 @@ async def upload_truck_photo_for_dispatch(
             if not r:
                 raise HTTPException(status_code=404, detail="dispatch not found")
 
-    ai_analysis = await analyze_dispatch_vehicle(dispatch_id)
+    background_tasks.add_task(analyze_dispatch_vehicle, dispatch_id)
+    ai_analysis = {"status": "queued"}
 
     return JSONResponse({
         "ok": True,
