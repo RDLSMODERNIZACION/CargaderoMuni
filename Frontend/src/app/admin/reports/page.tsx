@@ -427,7 +427,7 @@ export default function ReportsPage() {
                             router.push(`/admin/dispatches/${r.id}`);
                           }}
                         >
-                          ${r.id}
+                          #{r.id}
                         </button>
                       </td>
                     </tr>
