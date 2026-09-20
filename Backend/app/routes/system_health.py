@@ -207,6 +207,101 @@ async def list_health(station_id: Optional[str] = None):
     return {"ok": True, "stale_seconds": STALE_SECONDS, "items": items}
 
 
+@router.get("/stations-summary")
+async def stations_summary():
+    """
+    Devuelve un resumen de comunicación por estación para la grilla principal.
+    Considera offline cualquier equipo cuyo heartbeat tenga más de STALE_SECONDS.
+    """
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    device_id,
+                    device_type,
+                    name,
+                    ip,
+                    station_id,
+                    status,
+                    last_seen
+                FROM public.system_device_health
+                WHERE station_id IS NOT NULL
+                ORDER BY station_id, name
+                """
+            )
+            rows = await cur.fetchall()
+
+    now = datetime.now(timezone.utc)
+    by_station: dict[str, list[tuple]] = {}
+
+    for row in rows:
+        sid = str(row[4])
+        by_station.setdefault(sid, []).append(row)
+
+    items = []
+
+    for station_id, station_rows in by_station.items():
+        # Puede haber registros legacy y scoped para el mismo equipo.
+        # Priorizamos el ID scoped "<station_id>:...".
+        prefix = f"{station_id}:"
+        deduped = {}
+
+        for row in station_rows:
+            logical_key = (row[1], row[2], row[3])
+            current = deduped.get(logical_key)
+            row_scoped = str(row[0]).startswith(prefix)
+            current_scoped = bool(current and str(current[0]).startswith(prefix))
+
+            if current is None or (row_scoped and not current_scoped):
+                deduped[logical_key] = row
+
+        effective = list(deduped.values())
+        total = len(effective)
+        online = 0
+        problem_names = []
+
+        for row in effective:
+            reported_status = str(row[5] or "unknown")
+            last_seen = row[6]
+            age_seconds = (
+                max(0, int((now - last_seen).total_seconds()))
+                if last_seen
+                else None
+            )
+
+            status = reported_status
+            if age_seconds is None or age_seconds > STALE_SECONDS:
+                status = "offline"
+
+            if status == "online":
+                online += 1
+            else:
+                problem_names.append(str(row[2]))
+
+        problems = total - online
+
+        if total == 0:
+            overall_status = "no_data"
+        elif problems == 0:
+            overall_status = "ok"
+        else:
+            overall_status = "alert"
+
+        items.append(
+            {
+                "station_id": station_id,
+                "status": overall_status,
+                "total": total,
+                "online": online,
+                "problems": problems,
+                "problem_names": problem_names,
+            }
+        )
+
+    return {"ok": True, "items": items}
+
+
 @router.get("/events")
 async def list_health_events(
     limit: int = 100,
