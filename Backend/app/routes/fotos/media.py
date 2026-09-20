@@ -6,10 +6,12 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
+from psycopg.types.json import Jsonb
 
 from app.db import pool
+from app.services.vehicle_ai import analyze_dispatch_vehicle
 
 router = APIRouter(prefix="/fotos/media", tags=["fotos"])
 
@@ -52,6 +54,7 @@ async def _upload_bytes_to_supabase(*, data: bytes, content_type: str, object_pa
 @router.post("/dispatch/{dispatch_id}/truck")
 async def upload_truck_photo_for_dispatch(
     dispatch_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     station_id: Optional[str] = Form(None),
     suffix: str = Form("truck"),
@@ -96,11 +99,26 @@ async def upload_truck_photo_for_dispatch(
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "UPDATE public.water_dispatch SET photo_path=%s WHERE id=%s RETURNING id",
-                (public_url, dispatch_id),
+                """
+                UPDATE public.water_dispatch
+                SET
+                    photo_path = %s,
+                    photo_paths = COALESCE(photo_paths, '[]'::jsonb) || %s
+                WHERE id = %s
+                RETURNING id
+                """,
+                (public_url, Jsonb([public_url]), dispatch_id),
             )
             r = await cur.fetchone()
             if not r:
                 raise HTTPException(status_code=404, detail="dispatch not found")
 
-    return JSONResponse({"ok": True, "dispatch_id": dispatch_id, "photo_path": public_url})
+    background_tasks.add_task(analyze_dispatch_vehicle, dispatch_id)
+    ai_analysis = {"status": "queued"}
+
+    return JSONResponse({
+        "ok": True,
+        "dispatch_id": dispatch_id,
+        "photo_path": public_url,
+        "ai_vehicle_analysis": ai_analysis,
+    })
