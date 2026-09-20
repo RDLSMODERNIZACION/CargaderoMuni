@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from datetime import datetime
 from typing import Optional, Any
 
 import httpx
@@ -102,6 +103,24 @@ class StartDispatchIn(BaseModel):
 
 class SetLitersIn(BaseModel):
     liters: float = Field(..., ge=0)
+
+
+class AdminDispatchCreate(BaseModel):
+    station_id: str
+    company_id: int
+    liters: Optional[float] = Field(None, ge=0)
+    flow_l_min: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = None
+    ts: Optional[datetime] = None
+
+
+class AdminDispatchPatch(BaseModel):
+    station_id: Optional[str] = None
+    company_id: Optional[int] = None
+    liters: Optional[float] = Field(None, ge=0)
+    flow_l_min: Optional[float] = Field(None, ge=0)
+    note: Optional[str] = None
+    ts: Optional[datetime] = None
 
 
 # =========================
@@ -539,6 +558,149 @@ async def get_dispatch(dispatch_id: int):
             "company_code": r[17],
         },
     }
+
+
+# =========================
+# ADMIN DISPATCH CRUD
+# =========================
+@router.post("/dispatch/admin")
+async def create_dispatch_admin(body: AdminDispatchCreate):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM public.station WHERE id = %s",
+                (body.station_id,),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="station not found")
+
+            await cur.execute(
+                "SELECT 1 FROM public.company WHERE id = %s",
+                (body.company_id,),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="company not found")
+
+            await cur.execute(
+                """
+                INSERT INTO public.water_dispatch
+                    (station_id, company_id, liters, flow_l_min, note, ts)
+                VALUES
+                    (%s, %s, %s, %s, %s, COALESCE(%s, now()))
+                RETURNING id, ts
+                """,
+                (
+                    body.station_id,
+                    body.company_id,
+                    body.liters,
+                    body.flow_l_min,
+                    body.note or "despacho creado manualmente",
+                    body.ts,
+                ),
+            )
+            row = await cur.fetchone()
+
+    return {
+        "ok": True,
+        "id": int(row[0]),
+        "ts": row[1].isoformat() if row[1] else None,
+    }
+
+
+@router.patch("/dispatch/{dispatch_id}")
+async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch):
+    updates = []
+    params = []
+
+    payload = body.model_dump(exclude_unset=True)
+
+    if "station_id" in payload:
+        updates.append("station_id = %s")
+        params.append(payload["station_id"])
+    if "company_id" in payload:
+        updates.append("company_id = %s")
+        params.append(payload["company_id"])
+    if "liters" in payload:
+        updates.append("liters = %s")
+        params.append(payload["liters"])
+    if "flow_l_min" in payload:
+        updates.append("flow_l_min = %s")
+        params.append(payload["flow_l_min"])
+    if "note" in payload:
+        updates.append("note = %s")
+        params.append(payload["note"])
+    if "ts" in payload:
+        updates.append("ts = %s")
+        params.append(payload["ts"])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No hay campos para actualizar")
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            if "station_id" in payload:
+                await cur.execute(
+                    "SELECT 1 FROM public.station WHERE id = %s",
+                    (payload["station_id"],),
+                )
+                if not await cur.fetchone():
+                    raise HTTPException(status_code=404, detail="station not found")
+
+            if "company_id" in payload:
+                await cur.execute(
+                    "SELECT 1 FROM public.company WHERE id = %s",
+                    (payload["company_id"],),
+                )
+                if not await cur.fetchone():
+                    raise HTTPException(status_code=404, detail="company not found")
+
+            params.append(dispatch_id)
+            await cur.execute(
+                f"""
+                UPDATE public.water_dispatch
+                   SET {", ".join(updates)}
+                 WHERE id = %s
+             RETURNING id
+                """,
+                tuple(params),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="dispatch not found")
+
+    return {"ok": True, "id": dispatch_id}
+
+
+@router.delete("/dispatch/{dispatch_id}")
+async def delete_dispatch_admin(dispatch_id: int):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COUNT(*) FROM public.wallet_movement WHERE dispatch_id = %s",
+                (dispatch_id,),
+            )
+            movement_count = int((await cur.fetchone())[0] or 0)
+
+            if movement_count > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "El despacho tiene movimientos financieros asociados y no puede eliminarse.",
+                        "wallet_movements": movement_count,
+                    },
+                )
+
+            await cur.execute(
+                "DELETE FROM public.water_dispatch WHERE id = %s RETURNING id",
+                (dispatch_id,),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="dispatch not found")
+
+    return {"ok": True, "id": dispatch_id}
 
 
 # =========================
