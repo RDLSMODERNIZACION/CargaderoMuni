@@ -322,9 +322,13 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
 
             row = await cur.fetchone()
 
+    dispatch_id = int(row[0])
+    if payload.photo_path:
+        background_tasks.add_task(analyze_dispatch_vehicle, dispatch_id)
+
     return {
         "ok": True,
-        "id": int(row[0]),
+        "id": dispatch_id,
         "ts": row[1].isoformat() if row and row[1] else None,
         "station_id": payload.station_id,
         "company_code": payload.company_code,
@@ -332,6 +336,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
         "photo_path": payload.photo_path,
         "photo_paths": photo_paths,
         "note": payload.note,
+        "ai_vehicle_analysis": {"status": "queued"} if payload.photo_path else {"status": "no_photos"},
     }
 
 
