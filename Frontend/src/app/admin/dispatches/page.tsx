@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
 import { apiJSON } from "../../../lib/api/api";
@@ -172,7 +173,7 @@ export default function DispatchesPage() {
       setCreateOpen(false);
       setForm(emptyCreate);
       await loadDispatches();
-      router.push("/admin/dispatches/" + created.id);
+      router.push(("/admin/dispatches/" + created.id) as Route);
     } catch (e: any) {
       setError(e?.message ?? "No se pudo crear el despacho");
     } finally {
@@ -335,7 +336,7 @@ export default function DispatchesPage() {
             columns={columns}
             initialSortKey="ts"
             initialSortDir="desc"
-            onRowClick={(row: DispatchItem) => router.push("/admin/dispatches/" + row.id)}
+            onRowClick={(row: DispatchItem) => router.push(("/admin/dispatches/" + row.id) as Route)}
           />
         )}
       </section>
