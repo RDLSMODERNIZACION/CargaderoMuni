@@ -33,6 +33,20 @@ type Company = {
   active: boolean;
 };
 
+type CompanyForm = {
+  name: string;
+  code: string;
+  pin: string;
+  active: boolean;
+};
+
+const emptyCompanyForm: CompanyForm = {
+  name: "",
+  code: "",
+  pin: "",
+  active: true,
+};
+
 // ✅ Despachos para facturación por empresa
 type DispatchRow = {
   id: number;
@@ -62,6 +76,10 @@ export default function UsersPage() {
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [loadingBill, setLoadingBill] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Company | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<CompanyForm>(emptyCompanyForm);
 
   // ====== Cargar empresas ======
   async function loadCompanies() {
@@ -160,6 +178,102 @@ export default function UsersPage() {
     }
   }
 
+
+  function openCreate() {
+    setEditing(null);
+    setForm(emptyCompanyForm);
+    setFormOpen(true);
+  }
+
+  function openEdit(company: Company) {
+    setEditing(company);
+    setForm({
+      name: company.name || "",
+      code: company.code || "",
+      pin: company.pin || "",
+      active: company.active,
+    });
+    setFormOpen(true);
+  }
+
+  async function saveCompany() {
+    if (!form.name.trim() || !form.code.trim()) {
+      setError("Nombre y código son obligatorios.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      if (editing) {
+        await apiJSON("/company/id/" + editing.id, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: form.name.trim(),
+            code: form.code.trim(),
+            pin: form.pin.trim() || null,
+            active: form.active,
+          }),
+        });
+      } else {
+        const created = await apiJSON<{ ok: boolean; id: number }>("/company", {
+          method: "POST",
+          body: JSON.stringify({
+            name: form.name.trim(),
+            code: form.code.trim(),
+            pin: form.pin.trim() || null,
+          }),
+        });
+
+        if (!form.active) {
+          await apiJSON("/company/id/" + created.id, {
+            method: "PATCH",
+            body: JSON.stringify({ active: false }),
+          });
+        }
+      }
+
+      setFormOpen(false);
+      setEditing(null);
+      setForm(emptyCompanyForm);
+      await loadCompanies();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo guardar la empresa");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCompany(company: Company) {
+    const ok = window.confirm(
+      "¿Eliminar la empresa \"" + company.name + "\"?\n\nSi tiene despachos, saldo, pagos o movimientos asociados, el sistema bloqueará el borrado."
+    );
+    if (!ok) return;
+
+    setError(null);
+    try {
+      await apiJSON("/company/id/" + company.id, { method: "DELETE" });
+      if (selectedId === company.id) setSelectedId(null);
+      await loadCompanies();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo eliminar la empresa");
+    }
+  }
+
+  async function setCompanyActive(company: Company, active: boolean) {
+    setError(null);
+    try {
+      await apiJSON("/company/id/" + company.id, {
+        method: "PATCH",
+        body: JSON.stringify({ active }),
+      });
+      await loadCompanies();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo actualizar el estado de la empresa");
+    }
+  }
+
   // ====== Facturación por mes (por empresa) ======
   const [billMonth, setBillMonth] = useState<string>(currentMonth());
   const [billRows, setBillRows] = useState<DispatchRow[]>([]);
@@ -236,11 +350,21 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Empresas (PIN)</h1>
-        <button className="btn btn-secondary" onClick={loadCompanies} disabled={loadingMeta || loadingBill}>
-          Recargar
-        </button>
+      <header className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">Empresas (PIN)</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Administrá empresas, códigos de acceso y PIN.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={loadCompanies} disabled={loadingMeta || loadingBill}>
+            Recargar
+          </button>
+          <button className="btn" onClick={openCreate}>
+            + Nueva empresa
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -338,19 +462,23 @@ export default function UsersPage() {
                     <div className="card">
                       <h3 className="font-semibold mb-3">Acciones rápidas</h3>
                       <div className="flex flex-wrap gap-2">
-                        {selected.active ? (
-                          <button className="btn" onClick={() => deactivateCompany(selected.code)}>
-                            Desactivar
-                          </button>
-                        ) : (
-                          <button className="btn" onClick={() => reactivateCompany(selected)}>
-                            Reactivar
-                          </button>
-                        )}
+                        <button className="btn btn-secondary" onClick={() => openEdit(selected)}>
+                          Editar
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setCompanyActive(selected, !selected.active)}
+                        >
+                          {selected.active ? "Desactivar" : "Activar"}
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() => deleteCompany(selected)}
+                          style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+                        >
+                          Eliminar
+                        </button>
                       </div>
-                      <p className="mt-2 text-xs text-slate-500">
-                        * Estas acciones pegan al backend: /company y /company/{`{code}`}/deactivate
-                      </p>
                     </div>
                   </div>
                 ),
@@ -443,6 +571,86 @@ export default function UsersPage() {
           />
         )}
       </Drawer>
+
+      {formOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">
+                  {editing ? "Editar empresa" : "Nueva empresa"}
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  El código es el identificador que se sincroniza con Hikvision.
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setFormOpen(false)}
+                disabled={saving}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Nombre de empresa</label>
+                <input
+                  className="input"
+                  value={form.name}
+                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Ej. TECHIN"
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Código</label>
+                  <input
+                    className="input"
+                    value={form.code}
+                    onChange={(e) => setForm((p) => ({ ...p, code: e.target.value }))}
+                    placeholder="EmployeeNo"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">PIN</label>
+                  <input
+                    className="input"
+                    value={form.pin}
+                    onChange={(e) => setForm((p) => ({ ...p, pin: e.target.value }))}
+                    placeholder="PIN de acceso"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.active}
+                  onChange={(e) => setForm((p) => ({ ...p, active: e.target.checked }))}
+                />
+                <span className="text-sm">Empresa activa</span>
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setFormOpen(false)}
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              <button className="btn" onClick={saveCompany} disabled={saving}>
+                {saving ? "Guardando…" : editing ? "Guardar cambios" : "Crear empresa"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
