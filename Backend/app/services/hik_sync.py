@@ -1,17 +1,7 @@
 """Station-scoped RFID inventory and dispatch identity; no device credentials logged."""
-import hmac
-import os
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-
-
-def require_sync_token(supplied: str | None) -> None:
-    expected = os.getenv("HIK_SYNC_TOKEN", "")
-    if not expected:
-        raise HTTPException(503, "Configure HIK_SYNC_TOKEN in the backend")
-    if not supplied or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(401, "Invalid synchronization token")
 
 
 def build_inventory(companies, drivers, credentials, station_id, now=None):

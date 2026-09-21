@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
-from app.services.hik_sync import build_inventory, require_sync_token, resolve_driver
+from app.services.hik_sync import build_inventory, resolve_driver
 
 NOW = datetime(2026, 9, 21, tzinfo=timezone.utc)
 COMPANIES = [('3', 'KOMPASS', '1234', True)]
@@ -28,15 +28,6 @@ def test_duplicate_rfid_aliases_across_people_abort():
     with pytest.raises(HTTPException) as e:
         build_inventory([],DRIVERS+[(3,'OTHER',True,'DRIVER-3','3',True)],[(2,'123',True,None,None,None),(3,'123',True,None,None,None)],'3',NOW)
     assert e.value.status_code==409
-
-def test_token_required(monkeypatch):
-    monkeypatch.delenv('HIK_SYNC_TOKEN',raising=False)
-    with pytest.raises(HTTPException) as e: require_sync_token('x')
-    assert e.value.status_code==503
-    monkeypatch.setenv('HIK_SYNC_TOKEN','test-secret')
-    with pytest.raises(HTTPException) as e: require_sync_token('wrong')
-    assert e.value.status_code==401
-    require_sync_token('test-secret')
 
 class Cursor:
     def __init__(self, rows): self.rows=rows

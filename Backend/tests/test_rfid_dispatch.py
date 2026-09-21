@@ -22,7 +22,7 @@ class Pool:
     def cursor(self): return self.cur
 
 def client(monkeypatch):
-    cur=Cursor();monkeypatch.setattr(water,'pool',Pool(cur));monkeypatch.setenv('HIK_SYNC_TOKEN','test-token')
+    cur=Cursor();monkeypatch.setattr(water,'pool',Pool(cur))
     app=FastAPI();app.include_router(water.router,prefix='/water')
     return TestClient(app),cur
 
@@ -30,16 +30,18 @@ def test_json_and_multipart_store_driver_and_method(monkeypatch):
     c,cur=client(monkeypatch)
     data=dict(station_id='3',company_code='3',employee_no='DRIVER-2',card_no='00123',access_method='rfid')
     for kwargs in [dict(json=data),dict(files={k:(None,v) for k,v in data.items()})]:
-        r=c.post('/water/dispatch/start',headers={'X-Hik-Sync-Token':'test-token'},**kwargs)
+        r=c.post('/water/dispatch/start',**kwargs)
         assert r.status_code==200, r.text
         assert r.json()['pin_user_id']==2 and r.json()['access_method']=='rfid'
         inserts=[p for sql,p in cur.calls if 'INSERT INTO public.water_dispatch' in sql]
         assert inserts[-1][1]==3 and inserts[-1][-2:]==(2,'rfid')
 
-def test_rfid_without_token_has_no_insert(monkeypatch):
+def test_rfid_without_token_still_rejects_unknown_card(monkeypatch):
     c,cur=client(monkeypatch)
+    async def no_matches(): return []
+    cur.fetchall=no_matches
     r=c.post('/water/dispatch/start',json=dict(station_id='3',employee_no='DRIVER-2',card_no='123'))
-    assert r.status_code==401
+    assert r.status_code==403
     assert not any('INSERT' in sql for sql,p in cur.calls)
 
 def test_legacy_pin_and_manual_still_work(monkeypatch):

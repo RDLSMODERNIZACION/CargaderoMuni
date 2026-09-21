@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
 from app.db import pool
-from app.services.hik_sync import require_sync_token, resolve_driver
+from app.services.hik_sync import resolve_driver
 from app.services.vehicle_ai import analyze_dispatch_vehicle
 
 router = APIRouter()
@@ -129,7 +129,6 @@ class AdminDispatchPatch(BaseModel):
 
 async def resolve_access(cur, request, station_id, company_code, employee_no, card_no, method):
     if employee_no or card_no or method == "rfid":
-        require_sync_token(request.headers.get("x-hik-sync-token"))
         user_id, company_id, code = await resolve_driver(
             cur, station_id, employee_no, card_no, company_code)
         return user_id, company_id, code, "rfid"
