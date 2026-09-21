@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
 from app.db import pool
+from app.services.hik_sync import require_sync_token, resolve_driver
 from app.services.vehicle_ai import analyze_dispatch_vehicle
 
 router = APIRouter()
@@ -92,6 +93,9 @@ def _normalize_photo_paths(value: Any, fallback_photo: Optional[str] = None) -> 
 # Schemas
 # =========================
 class StartDispatchIn(BaseModel):
+    employee_no: Optional[str] = None
+    card_no: Optional[str] = None
+    access_method: Optional[str] = None
     station_id: str = Field(..., examples=["1"])
     company_code: Optional[str] = Field(None, examples=["1"])
     photo_path: Optional[str] = Field(None, examples=["https://storage/snap.jpg"])
@@ -121,6 +125,25 @@ class AdminDispatchPatch(BaseModel):
     flow_l_min: Optional[float] = Field(None, ge=0)
     note: Optional[str] = None
     ts: Optional[datetime] = None
+
+
+async def resolve_access(cur, request, station_id, company_code, employee_no, card_no, method):
+    if employee_no or card_no or method == "rfid":
+        require_sync_token(request.headers.get("x-hik-sync-token"))
+        user_id, company_id, code = await resolve_driver(
+            cur, station_id, employee_no, card_no, company_code)
+        return user_id, company_id, code, "rfid"
+    if method not in ("", "manual", "company_pin"):
+        raise HTTPException(422, "Unsupported access_method")
+    if company_code:
+        await cur.execute("SELECT id FROM public.company WHERE code=%s AND active", (company_code,))
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "company not found or inactive")
+        return None, int(row[0]), company_code, "company_pin"
+    if method == "company_pin":
+        raise HTTPException(422, "company_code is required")
+    return None, None, "", "manual"
 
 
 # =========================
@@ -169,31 +192,13 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
                 detail="station_id is required (multipart)",
             )
 
-        # company_code es opcional:
-        # - con PIN: se resuelve empresa activa por code;
-        # - arranque manual de bomba: queda company_id = NULL.
-        company_id = None
-        if company_code:
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        SELECT id
-                        FROM public.company
-                        WHERE code = %s
-                          AND active
-                        """,
-                        (company_code,),
-                    )
-                    r = await cur.fetchone()
-
-                    if not r:
-                        raise HTTPException(
-                            status_code=404,
-                            detail="company not found or inactive",
-                        )
-
-                    company_id = int(r[0])
+        employee_no = str(form.get("employee_no") or "").strip()
+        card_no = str(form.get("card_no") or "").strip()
+        requested_method = str(form.get("access_method") or "").strip()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                pin_user_id, company_id, company_code, access_method = await resolve_access(
+                    cur, request, station_id, company_code, employee_no, card_no, requested_method)
 
         # Aceptamos cantidad dinámica de archivos desde Node-RED.
         # Cualquier campo multipart cuyo valor sea un UploadFile es procesado.
@@ -251,9 +256,9 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
                 await cur.execute(
                     """
                     INSERT INTO public.water_dispatch
-                        (station_id, company_id, photo_path, photo_paths, note)
+                        (station_id, company_id, photo_path, photo_paths, note, pin_user_id, access_method)
                     VALUES
-                        (%s, %s, %s, %s, %s)
+                        (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id, ts
                     """,
                     (
@@ -261,7 +266,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
                         company_id,
                         main_photo,
                         Jsonb(uploaded_urls),
-                        note,
+                        note, pin_user_id, access_method,
                     ),
                 )
 
@@ -280,6 +285,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
                 "station_id": station_id,
                 "company_code": company_code,
                 "company_id": company_id,
+                "pin_user_id": pin_user_id, "access_method": access_method,
                 "photo_path": main_photo,
                 "photo_paths": uploaded_urls,
                 "note": note,
@@ -295,38 +301,19 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            company_id = None
-            company_code = (payload.company_code or "").strip()
-
-            if company_code:
-                await cur.execute(
-                    """
-                    SELECT id
-                    FROM public.company
-                    WHERE code = %s
-                      AND active
-                    """,
-                    (company_code,),
-                )
-
-                r = await cur.fetchone()
-
-                if not r:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="company not found or inactive",
-                    )
-
-                company_id = int(r[0])
+            pin_user_id, company_id, company_code, access_method = await resolve_access(
+                cur, request, payload.station_id, (payload.company_code or "").strip(),
+                (payload.employee_no or "").strip(), (payload.card_no or "").strip(),
+                payload.access_method or "")
 
             photo_paths = [payload.photo_path] if payload.photo_path else []
 
             await cur.execute(
                 """
                 INSERT INTO public.water_dispatch
-                    (station_id, company_id, photo_path, photo_paths, note)
+                    (station_id, company_id, photo_path, photo_paths, note, pin_user_id, access_method)
                 VALUES
-                    (%s, %s, %s, %s, %s)
+                    (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, ts
                 """,
                 (
@@ -334,7 +321,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
                     company_id,
                     payload.photo_path,
                     Jsonb(photo_paths),
-                    payload.note,
+                    payload.note, pin_user_id, access_method,
                 ),
             )
 
@@ -351,6 +338,7 @@ async def start_dispatch(request: Request, background_tasks: BackgroundTasks):
         "station_id": payload.station_id,
         "company_code": company_code or None,
         "company_id": company_id,
+        "pin_user_id": pin_user_id, "access_method": access_method,
         "photo_path": payload.photo_path,
         "photo_paths": photo_paths,
         "note": payload.note,
@@ -425,10 +413,12 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                         wd.ai_vehicle_analysis,
                         c.id AS company_id,
                         c.name AS company_name,
-                        c.code AS company_code
+                        c.code AS company_code,
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method
                     FROM public.water_dispatch wd
                     LEFT JOIN public.company c
                         ON c.id = wd.company_id
+                    LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
                     WHERE wd.station_id = %s
                     ORDER BY wd.ts DESC
                     LIMIT %s
@@ -450,10 +440,12 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                         wd.ai_vehicle_analysis,
                         c.id AS company_id,
                         c.name AS company_name,
-                        c.code AS company_code
+                        c.code AS company_code,
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method
                     FROM public.water_dispatch wd
                     LEFT JOIN public.company c
                         ON c.id = wd.company_id
+                    LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
                     ORDER BY wd.ts DESC
                     LIMIT %s
                     """,
@@ -482,6 +474,7 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
                 "company_id": r[9],
                 "company_name": r[10],
                 "company_code": r[11],
+                "pin_user_id": r[12], "driver_name": r[13], "access_method": r[14],
             }
         )
 
@@ -518,9 +511,11 @@ async def get_dispatch(dispatch_id: int):
                     wd.debited_at,
                     c.id AS company_id,
                     c.name AS company_name,
-                    c.code AS company_code
+                    c.code AS company_code,
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c ON c.id = wd.company_id
+                    LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
                 LEFT JOIN public.station s ON s.id = wd.station_id
                 WHERE wd.id = %s
                 """,
@@ -555,6 +550,7 @@ async def get_dispatch(dispatch_id: int):
             "company_id": r[15],
             "company_name": r[16],
             "company_code": r[17],
+            "pin_user_id": r[18], "driver_name": r[19], "access_method": r[20],
         },
     }
 

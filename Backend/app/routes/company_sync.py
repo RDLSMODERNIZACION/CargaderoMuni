@@ -1,6 +1,7 @@
 # app/routes/company_sync.py
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
+from app.services.hik_sync import require_sync_token, load_inventory
 
 from app.db import pool
 
@@ -8,7 +9,8 @@ router = APIRouter()
 
 
 @router.get("/hik-users")
-async def list_hik_users():
+async def list_hik_users(version: int = 1, station_id: str | None = None,
+                         x_hik_sync_token: str | None = Header(default=None)):
     """
     Devuelve las empresas para sincronizar con el teclado Hikvision.
 
@@ -31,6 +33,16 @@ async def list_hik_users():
       ]
     }
     """
+
+    if version == 2:
+        require_sync_token(x_hik_sync_token)
+        if not station_id:
+            raise HTTPException(422, "station_id is required for version=2")
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                return await load_inventory(cur, station_id)
+    if version != 1:
+        raise HTTPException(422, "Unsupported synchronization version")
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
