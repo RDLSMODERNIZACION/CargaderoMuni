@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import DataTable, { type Column } from "../../../components/DataTable";
 import Badge from "../../../components/Badge";
 import { apiJSON } from "../../../lib/api/api";
@@ -59,6 +61,7 @@ const emptyDriverForm: DriverForm = {
 };
 
 export default function UsersPage() {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [q, setQ] = useState("");
@@ -401,200 +404,14 @@ export default function UsersPage() {
             columns={columns}
             initialSortKey="name"
             initialSortDir="asc"
-            onRowClick={(row) => {
-              setSelectedId(row.id);
-              setDetailTab("drivers");
-            }}
+            onRowClick={(row) => router.push(("/admin/users/" + row.id) as Route)}
             rowClassName={(row) => (selectedId === row.id ? "bg-sky-50" : "")}
           />
         )}
         <div className="mt-2 text-xs text-slate-500">
-          Click en una empresa para ver sus datos, camioneros y tarjetas RFID.
+          Click en una empresa para abrir su ficha completa.
         </div>
       </section>
-
-      {selected && (
-        <section className="card p-0 overflow-hidden">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 pt-4">
-            <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-500">Empresa seleccionada</div>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <h2 className="text-xl font-semibold">{selected.name}</h2>
-                  <Badge color={selected.active ? "green" : "red"}>
-                    {selected.active ? "Activa" : "Inactiva"}
-                  </Badge>
-                </div>
-              </div>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setSelectedId(null)}
-              >
-                Cerrar detalle
-              </button>
-            </div>
-
-            <div className="flex gap-1 overflow-x-auto">
-              <button
-                className={
-                  "px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap " +
-                  (detailTab === "company"
-                    ? "border-sky-600 text-sky-700 bg-white"
-                    : "border-transparent text-slate-500 hover:text-slate-800")
-                }
-                onClick={() => setDetailTab("company")}
-              >
-                Datos de empresa
-              </button>
-              <button
-                className={
-                  "px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap " +
-                  (detailTab === "drivers"
-                    ? "border-sky-600 text-sky-700 bg-white"
-                    : "border-transparent text-slate-500 hover:text-slate-800")
-                }
-                onClick={() => setDetailTab("drivers")}
-              >
-                Camioneros y RFID ({drivers.length})
-              </button>
-            </div>
-          </div>
-
-          <div className="p-5">
-            {detailTab === "company" ? (
-              <div className="grid xl:grid-cols-[1fr_auto] gap-5">
-                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="text-xs text-slate-500">Empresa</div>
-                    <div className="font-semibold mt-1">{selected.name}</div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="text-xs text-slate-500">Código</div>
-                    <div className="font-semibold mt-1">{selected.code}</div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="text-xs text-slate-500">PIN de respaldo</div>
-                    <div className="font-semibold mt-1">
-                      {selected.pin ? String(selected.pin) : "—"}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 p-4">
-                    <div className="text-xs text-slate-500">Estado</div>
-                    <div className="mt-1">
-                      <Badge color={selected.active ? "green" : "red"}>
-                        {selected.active ? "Activa" : "Inactiva"}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 self-start">
-                  <button className="btn btn-secondary" onClick={() => openEdit(selected)}>
-                    Editar
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => setCompanyActive(selected, !selected.active)}
-                  >
-                    {selected.active ? "Desactivar" : "Activar"}
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => deleteCompany(selected)}
-                    style={{ borderColor: "#fecaca", color: "#b91c1c" }}
-                  >
-                    Eliminar
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <h3 className="text-lg font-semibold">Camioneros de {selected.name}</h3>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Asociá cada camionero con su RFID. El PIN de la empresa queda únicamente como respaldo.
-                    </p>
-                  </div>
-                  <button className="btn" onClick={openCreateDriver}>
-                    + Agregar camionero
-                  </button>
-                </div>
-
-                {driversLoading ? (
-                  <div className="text-sm text-slate-500 py-6">Cargando camioneros…</div>
-                ) : drivers.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
-                    <div className="font-medium">No hay camioneros registrados</div>
-                    <div className="text-sm text-slate-500 mt-1">
-                      Agregá el primer camionero y luego asociá su tarjeta RFID.
-                    </div>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 text-slate-600">
-                        <tr>
-                          <th className="text-left font-medium px-4 py-3">Camionero</th>
-                          <th className="text-left font-medium px-4 py-3">DNI</th>
-                          <th className="text-left font-medium px-4 py-3">Teléfono</th>
-                          <th className="text-left font-medium px-4 py-3">RFID / UID</th>
-                          <th className="text-left font-medium px-4 py-3">Estado</th>
-                          <th className="text-right font-medium px-4 py-3">Acciones</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {drivers.map((driver) => (
-                          <tr key={driver.id} className="hover:bg-slate-50">
-                            <td className="px-4 py-3 font-medium">{driver.name}</td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {driver.document_number || "—"}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600">
-                              {driver.phone || "—"}
-                            </td>
-                            <td className="px-4 py-3">
-                              {driver.rfid_uid ? (
-                                <code className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">
-                                  {driver.rfid_uid}
-                                </code>
-                              ) : (
-                                <span className="text-amber-700">Sin asignar</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              <Badge color={driver.enabled ? "green" : "red"}>
-                                {driver.enabled ? "Activo" : "Inactivo"}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  className="btn btn-secondary"
-                                  onClick={() => setDriverEnabled(driver, !driver.enabled)}
-                                >
-                                  {driver.enabled ? "Desactivar" : "Activar"}
-                                </button>
-                                <button
-                                  className="btn btn-secondary"
-                                  onClick={() => deleteDriver(driver)}
-                                  style={{ color: "#b91c1c" }}
-                                >
-                                  Eliminar
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
 
       {driverFormOpen && selected && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
