@@ -25,11 +25,38 @@ type CompanyForm = {
   active: boolean;
 };
 
+type Driver = {
+  id: number;
+  name: string;
+  document_number?: string | null;
+  phone?: string | null;
+  enabled: boolean;
+  rfid_credential_id?: number | null;
+  rfid_uid?: string | null;
+  rfid_active?: boolean | null;
+};
+
+type DriverForm = {
+  name: string;
+  document_number: string;
+  phone: string;
+  rfid_uid: string;
+  enabled: boolean;
+};
+
 const emptyCompanyForm: CompanyForm = {
   name: "",
   code: "",
   pin: "",
   active: true,
+};
+
+const emptyDriverForm: DriverForm = {
+  name: "",
+  document_number: "",
+  phone: "",
+  rfid_uid: "",
+  enabled: true,
 };
 
 export default function UsersPage() {
@@ -44,6 +71,11 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<Company | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<CompanyForm>(emptyCompanyForm);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [driversLoading, setDriversLoading] = useState(false);
+  const [driverFormOpen, setDriverFormOpen] = useState(false);
+  const [driverForm, setDriverForm] = useState<DriverForm>(emptyDriverForm);
+  const [driverSaving, setDriverSaving] = useState(false);
 
   useEffect(() => setMounted(true), []);
 
@@ -70,6 +102,29 @@ export default function UsersPage() {
     if (!mounted) return;
     loadCompanies();
   }, [mounted]);
+
+  async function loadDrivers(companyId: number) {
+    setDriversLoading(true);
+    try {
+      const res = await apiJSON<{ ok: boolean; items: Driver[] }>(
+        "/company/id/" + companyId + "/drivers"
+      );
+      setDrivers(Array.isArray(res?.items) ? res.items : []);
+    } catch (e: any) {
+      setDrivers([]);
+      setError(e?.message ?? "Error cargando camioneros");
+    } finally {
+      setDriversLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (selectedId == null) {
+      setDrivers([]);
+      return;
+    }
+    loadDrivers(selectedId);
+  }, [selectedId]);
 
   const filtered = useMemo(() => {
     const qq = norm(q);
@@ -191,6 +246,72 @@ export default function UsersPage() {
     }
   }
 
+  function openCreateDriver() {
+    setDriverForm(emptyDriverForm);
+    setDriverFormOpen(true);
+  }
+
+  async function saveDriver() {
+    if (!selected || !driverForm.name.trim()) {
+      setError("El nombre del camionero es obligatorio.");
+      return;
+    }
+
+    setDriverSaving(true);
+    setError(null);
+    try {
+      await apiJSON("/company/id/" + selected.id + "/drivers", {
+        method: "POST",
+        body: JSON.stringify({
+          name: driverForm.name.trim(),
+          document_number: driverForm.document_number.trim() || null,
+          phone: driverForm.phone.trim() || null,
+          rfid_uid: driverForm.rfid_uid.trim() || null,
+          enabled: driverForm.enabled,
+        }),
+      });
+      setDriverFormOpen(false);
+      setDriverForm(emptyDriverForm);
+      await loadDrivers(selected.id);
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo guardar el camionero");
+    } finally {
+      setDriverSaving(false);
+    }
+  }
+
+  async function setDriverEnabled(driver: Driver, enabled: boolean) {
+    if (!selected) return;
+    setError(null);
+    try {
+      await apiJSON("/company/id/" + selected.id + "/drivers/" + driver.id, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      });
+      await loadDrivers(selected.id);
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo actualizar el camionero");
+    }
+  }
+
+  async function deleteDriver(driver: Driver) {
+    if (!selected) return;
+    const ok = window.confirm(
+      "¿Eliminar al camionero \"" + driver.name + "\"? Su RFID dejará de estar asociada."
+    );
+    if (!ok) return;
+
+    setError(null);
+    try {
+      await apiJSON("/company/id/" + selected.id + "/drivers/" + driver.id, {
+        method: "DELETE",
+      });
+      await loadDrivers(selected.id);
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo eliminar el camionero");
+    }
+  }
+
   async function deleteCompany(company: Company) {
     const ok = window.confirm(
       "¿Eliminar definitivamente la empresa \"" + company.name + "\"?\n\nLos despachos históricos se conservarán, pero quedarán sin empresa asociada."
@@ -285,7 +406,7 @@ export default function UsersPage() {
           />
         )}
         <div className="mt-2 text-xs text-slate-500">
-          Click en una fila para editar, activar/desactivar o eliminar.
+          Click en una empresa para ver sus datos, camioneros y tarjetas RFID.
         </div>
       </section>
 
@@ -312,6 +433,75 @@ export default function UsersPage() {
             </div>
 
             <div className="card">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="font-semibold">Camioneros y RFID</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Cada camionero queda asociado a esta empresa y puede tener una tarjeta RFID.
+                  </p>
+                </div>
+                <button className="btn" onClick={openCreateDriver}>
+                  + Camionero
+                </button>
+              </div>
+
+              {driversLoading ? (
+                <div className="text-sm text-slate-500">Cargando camioneros…</div>
+              ) : drivers.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-500">
+                  Esta empresa todavía no tiene camioneros registrados.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {drivers.map((driver) => (
+                    <div
+                      key={driver.id}
+                      className="rounded-xl border border-slate-200 p-3 flex items-start justify-between gap-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">{driver.name}</span>
+                          <Badge color={driver.enabled ? "green" : "red"}>
+                            {driver.enabled ? "Activo" : "Inactivo"}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {driver.document_number ? "DNI: " + driver.document_number : "DNI: —"}
+                          {driver.phone ? " · Tel: " + driver.phone : ""}
+                        </div>
+                        <div className="mt-2 text-sm">
+                          <span className="text-slate-500">RFID:</span>{" "}
+                          {driver.rfid_uid ? (
+                            <code className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">
+                              {driver.rfid_uid}
+                            </code>
+                          ) : (
+                            <span className="text-amber-700">Sin asignar</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-1 flex-wrap justify-end">
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => setDriverEnabled(driver, !driver.enabled)}
+                        >
+                          {driver.enabled ? "Desactivar" : "Activar"}
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => deleteDriver(driver)}
+                          style={{ color: "#b91c1c" }}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
               <h3 className="font-semibold mb-3">Acciones</h3>
               <div className="flex flex-wrap gap-2">
                 <button className="btn btn-secondary" onClick={() => openEdit(selected)}>
@@ -335,6 +525,103 @@ export default function UsersPage() {
           </div>
         )}
       </Drawer>
+
+      {driverFormOpen && selected && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">Agregar camionero</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Empresa: <b>{selected.name}</b>. La RFID se puede cargar ahora o dejar pendiente para leerla mañana.
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDriverFormOpen(false)}
+                disabled={driverSaving}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Nombre y apellido *</label>
+                <input
+                  className="input"
+                  value={driverForm.name}
+                  onChange={(e) => setDriverForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Ej. Juan Pérez"
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">DNI</label>
+                  <input
+                    className="input"
+                    value={driverForm.document_number}
+                    onChange={(e) =>
+                      setDriverForm((p) => ({ ...p, document_number: e.target.value }))
+                    }
+                    placeholder="Opcional"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Teléfono</label>
+                  <input
+                    className="input"
+                    value={driverForm.phone}
+                    onChange={(e) => setDriverForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="Opcional"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Código RFID / UID</label>
+                <input
+                  className="input font-mono"
+                  value={driverForm.rfid_uid}
+                  onChange={(e) =>
+                    setDriverForm((p) => ({ ...p, rfid_uid: e.target.value.toUpperCase() }))
+                  }
+                  placeholder="Pasar tarjeta o escribir UID"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-slate-500">
+                  Podés dejarlo vacío y asignarlo cuando confirmemos qué código entrega el lector.
+                </p>
+              </div>
+
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={driverForm.enabled}
+                  onChange={(e) =>
+                    setDriverForm((p) => ({ ...p, enabled: e.target.checked }))
+                  }
+                />
+                <span className="text-sm">Camionero habilitado</span>
+              </label>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setDriverFormOpen(false)}
+                disabled={driverSaving}
+              >
+                Cancelar
+              </button>
+              <button className="btn" onClick={saveDriver} disabled={driverSaving}>
+                {driverSaving ? "Guardando…" : "Guardar camionero"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {formOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
