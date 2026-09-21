@@ -46,6 +46,8 @@ type DispatchDetail = {
   ai_vehicle_analysis?: VehicleAI | null;
   company_id?: number | null;
   company_name?: string | null;
+  driver_name?: string | null;
+  access_method?: string | null;
   company_code?: string | null;
 };
 
@@ -275,6 +277,8 @@ export default function DispatchDetailPage() {
               <div>
                 <div className="text-xs text-slate-500">Empresa</div>
                 <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
+                <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : "Manual"}</div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Litros</div>
@@ -461,6 +465,8 @@ export default function DispatchDetailPage() {
             <div>
               <div className="text-xs text-slate-500">Empresa</div>
               <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
+                <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : "Manual"}</div>
             </div>
             <div>
               <div className="text-xs text-slate-500">Fecha</div>

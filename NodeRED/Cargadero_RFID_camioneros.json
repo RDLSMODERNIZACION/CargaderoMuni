@@ -1,0 +1,785 @@
+[
+  {
+    "id": "16eae00c387784ac",
+    "type": "tab",
+    "label": "Cargadero · RFID por camionero",
+    "disabled": false,
+    "info": "",
+    "env": []
+  },
+  {
+    "id": "ba977187ecba6db2",
+    "type": "http in",
+    "z": "16eae00c387784ac",
+    "name": "POST /hik/raw (teclado)",
+    "url": "/hik/raw",
+    "method": "post",
+    "upload": true,
+    "swaggerDoc": "",
+    "x": 180,
+    "y": 140,
+    "wires": [
+      [
+        "74f1edfa7a0f3e76",
+        "a3414a3aecdeffcf"
+      ]
+    ]
+  },
+  {
+    "id": "a3414a3aecdeffcf",
+    "type": "http response",
+    "z": "16eae00c387784ac",
+    "name": "200 OK (rápido)",
+    "statusCode": "200",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "x": 500,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "74f1edfa7a0f3e76",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "extract event_log JSON",
+    "func": "// ======================================================\n// extract event_log JSON - versión robusta\n// Hikvision / teclado -> Node-RED\n// Acepta payload como string, Buffer u objeto multipart\n// ======================================================\n\nfunction asText(value) {\n    if (value === null || value === undefined) return \"\";\n\n    if (Buffer.isBuffer(value)) {\n        return value.toString(\"utf8\");\n    }\n\n    if (typeof value === \"string\") {\n        return value;\n    }\n\n    if (typeof value === \"object\") {\n        // Si viene como campo directo\n        if (value.event_log) {\n            if (Buffer.isBuffer(value.event_log)) return value.event_log.toString(\"utf8\");\n            if (typeof value.event_log === \"string\") return value.event_log;\n            return JSON.stringify(value.event_log);\n        }\n\n        // Si viene como eventLog\n        if (value.eventLog) {\n            if (Buffer.isBuffer(value.eventLog)) return value.eventLog.toString(\"utf8\");\n            if (typeof value.eventLog === \"string\") return value.eventLog;\n            return JSON.stringify(value.eventLog);\n        }\n\n        // Último recurso: convertir todo el objeto a texto\n        return JSON.stringify(value);\n    }\n\n    return String(value);\n}\n\n// 1) Buscar texto en los lugares más comunes\nlet s = \"\";\n\n// Caso normal\ns = asText(msg.payload);\n\n// Caso multipart procesado por HTTP In\nif (!s || s === \"{}\") {\n    if (msg.req && msg.req.body) {\n        s = asText(msg.req.body);\n    }\n}\n\n// Guardar una vista previa para debug\nmsg.preview = s.slice(0, 500);\n\n// Si sigue vacío, avisar mejor\nif (!s) {\n    node.warn(\"No llegó contenido útil en payload ni req.body\");\n    msg.debug_payload_type = typeof msg.payload;\n    msg.debug_payload = msg.payload;\n    return msg;\n}\n\n// 2) Intentar parsear directo si ya es JSON\ntry {\n    let direct = JSON.parse(s);\n\n    // Puede venir como JSON completo\n    if (direct.AccessControllerEvent) {\n        msg.ev = direct;\n        msg.acs = direct.AccessControllerEvent || {};\n        msg.payload = msg.acs;\n        return msg;\n    }\n\n    // Puede venir como objeto con event_log\n    if (direct.event_log) {\n        let ev2 = typeof direct.event_log === \"string\"\n            ? JSON.parse(direct.event_log)\n            : direct.event_log;\n\n        msg.ev = ev2;\n        msg.acs = ev2.AccessControllerEvent || {};\n        msg.payload = msg.acs;\n        return msg;\n    }\n\n} catch (e) {\n    // No pasa nada, seguimos con búsqueda dentro del multipart\n}\n\n// 3) Buscar el campo multipart name=\"event_log\"\nlet key = 'name=\"event_log\"';\nlet i = s.indexOf(key);\n\n// Algunas variantes pueden venir con comillas simples o distinto formato\nif (i < 0) {\n    key = \"name='event_log'\";\n    i = s.indexOf(key);\n}\n\nif (i < 0) {\n    // Si el texto entero contiene AccessControllerEvent, intentar extraer desde el primer {\n    if (s.indexOf(\"AccessControllerEvent\") >= 0) {\n        let j0 = s.indexOf(\"{\");\n        let k0 = s.lastIndexOf(\"}\");\n\n        if (j0 >= 0 && k0 > j0) {\n            let txt0 = s.slice(j0, k0 + 1).trim();\n\n            try {\n                msg.ev = JSON.parse(txt0);\n                msg.acs = msg.ev.AccessControllerEvent || {};\n                msg.payload = msg.acs;\n                return msg;\n            } catch (e) {\n                node.warn(\"Encontré AccessControllerEvent pero no pude parsear JSON: \" + e.message);\n                msg.bad_json_head = txt0.slice(0, 300);\n                return msg;\n            }\n        }\n    }\n\n    node.warn(\"No aparece name=\\\"event_log\\\" en body\");\n    msg.debug_payload_type = typeof msg.payload;\n    msg.debug_payload_preview = s.slice(0, 500);\n    return msg;\n}\n\n// 4) Buscar inicio del JSON después de event_log\nlet j = s.indexOf(\"{\", i);\nif (j < 0) {\n    node.warn(\"No encuentro '{' luego de event_log\");\n    msg.debug_payload_preview = s.slice(i, i + 500);\n    return msg;\n}\n\n// 5) Buscar final del JSON\nlet k = s.indexOf(\"\\n--\", j);\nif (k < 0) k = s.indexOf(\"\\r\\n--\", j);\nif (k < 0) k = s.lastIndexOf(\"}\") + 1;\nif (k <= j) k = s.length;\n\nlet txt = s.slice(j, k).trim();\n\n// 6) Parsear JSON final\ntry {\n    msg.ev = JSON.parse(txt);\n    msg.acs = msg.ev.AccessControllerEvent || {};\n    msg.payload = msg.acs;\n\n    node.status({\n        fill: \"green\",\n        shape: \"dot\",\n        text: \"event_log OK\"\n    });\n\n    return msg;\n\n} catch (e) {\n    node.warn(\"JSON parse failed: \" + e.message);\n    msg.bad_json_head = txt.slice(0, 500);\n    msg.debug_payload_preview = s.slice(0, 500);\n    return msg;\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 500,
+    "y": 140,
+    "wires": [
+      [
+        "0425a559cbc62860"
+      ]
+    ]
+  },
+  {
+    "id": "0425a559cbc62860",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Acceso válido · RFID camionero / PIN empresa",
+    "func": "const e=msg.payload || {}, cfg=flow.get('hik_config') || {};\nconst no=String(e.employeeNoString || e.employeeNo || '').trim();\nconst card=String(e.cardNo || '').trim();\nconst major=Number(e.majorEventType), sub=Number(e.subEventType);\nconst mode=String(e.currentVerifyMode || e.verifyMode || '').toLowerCase();\nconst isCard=major===5 && !!card && card!=='0' && (sub===1 || (sub===75 && mode.includes('card')));\nconst isPin=major===5 && sub===181 && (mode.includes('pw') || mode.includes('password'));\nif(!isCard && !isPin)return null;\nif(e.statusValue!==undefined && ![0,1].includes(Number(e.statusValue)))return null;\nconst ids=flow.get('hik_identities') || {};\nlet identity=ids[no], employeeNo=no;\nif(isCard && !identity) {\n    const matches=Object.entries(ids).filter(([k,u])=>u.kind==='driver' && u.active && u.cards.includes(card));\n    if(matches.length===1 && !no){employeeNo=matches[0][0];identity=matches[0][1];}\n}\nif(!identity || !identity.active || Date.now()-Number(flow.get('hik_identities_at') || 0)>600000) {\n    node.status({fill:'yellow',shape:'ring',text:'Usuario sin inventario vigente'});return null;\n}\nif(isCard && (identity.kind!=='driver' || !identity.cards.includes(card)))return null;\nif(isPin && identity.kind!=='company')return null;\nif(cfg.test_mode===true) {\n    node.status({fill:'green',shape:'dot',text:'PRUEBA OK: '+employeeNo+' → '+identity.company_code});\n    return [null,{payload:{test:true,employeeNo,pin_user_id:identity.pin_user_id,company_code:identity.company_code,method:isCard?'rfid':'company_pin'}}];\n}\nif(flow.get('current_dispatch_id') || flow.get('dispatch_start_pending'))return null;\nconst now=Date.now(), seen=flow.get('hik_seen') || {};\nfor(const k of Object.keys(seen))if(now-seen[k]>300000)delete seen[k];\nconst eventTs=(msg.ev || {}).dateTime || '';\nconst key=[employeeNo,e.serialNo || e.verifyNo || '',eventTs].join('|');\nif(seen[key] && now-seen[key]<(eventTs?300000:3000))return null;\nseen[key]=now;flow.set('hik_seen',seen);\nflow.set('dispatch_start_pending',true);flow.set('dispatch_start_source',isCard?'rfid':'pin');\nflow.set('last_pin_ok_ts',now);\nmsg.company_code=identity.company_code;msg.station_id=String(cfg.station_id);\nmsg.employee_no=isCard?employeeNo:'';msg.card_no=isCard?card:'';\nmsg.pin_user_id=identity.pin_user_id;msg.access_method=isCard?'rfid':'company_pin';\nmsg.dispatch_source=isCard?'rfid':'pin';\nreturn [msg,null];\n",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 790,
+    "y": 140,
+    "wires": [
+      [
+        "b8d2b9a48ab21fe7"
+      ],
+      [
+        "rfid_debug_ok"
+      ]
+    ]
+  },
+  {
+    "id": "b8d2b9a48ab21fe7",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Preparar captura",
+    "func": "let capture_id = Date.now() + \"_\" + Math.random().toString(36).slice(2, 8);\n\nmsg.capture_id = capture_id;\n\nconst source = msg.dispatch_source || flow.get(\"dispatch_start_source\") || (msg.company_code ? \"pin\" : \"pump\");\nconst isManualPump = source === \"pump\";\n\nflow.set(\"capture_\" + capture_id, {\n    station_id: msg.station_id || String((flow.get(\"hik_config\") || {}).station_id || \"2\"),\n    company_code: msg.company_code || \"\",\n    employee_no: msg.employee_no || \"\",\n    card_no: msg.card_no || \"\",\n    access_method: msg.access_method || \"manual\",\n    source: source,\n    note: isManualPump\n        ? \"ARRANQUE BOMBA MANUAL + fotos automáticas\"\n        : (msg.access_method === \"rfid\" ? \"RFID camionero OK + fotos\" : \"PIN empresa OK + fotos\"),\n    ts: new Date().toISOString()\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1040,
+    "y": 140,
+    "wires": [
+      [
+        "397a18f5b89423b5"
+      ]
+    ]
+  },
+  {
+    "id": "397a18f5b89423b5",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Crear requests cámaras",
+    "func": "// ======================================================\n// CREAR REQUESTS DE CAMARAS - DINAMICO\n// Lee access_control + cameras desde CONFIG central.\n// ======================================================\n\nconst capture_id = msg.capture_id;\n\nif (!capture_id) {\n    node.error(\"No llegó capture_id\", msg);\n    return null;\n}\n\nconst cfg = flow.get(\"hik_config\") || {};\nconst TIMEOUT_MS = Number(cfg.capture_timeout_ms || 5000);\n\nconst devices = [];\n\n// El teclado puede participar o no de la captura.\nconst ac = cfg.access_control || {};\nif (ac.capture !== false && ac.ip) {\n    devices.push({\n        key: String(ac.key || \"teclado\"),\n        label: String(ac.name || \"Teclado\"),\n        ip: String(ac.ip),\n        snapshot_path: String(ac.snapshot_path || \"/ISAPI/Streaming/channels/1/picture\")\n    });\n}\n\n// Cámaras variables.\nconst cameras = Array.isArray(cfg.cameras) ? cfg.cameras : [];\n\nfor (const cam of cameras) {\n    if (!cam || cam.capture === false || !cam.ip) continue;\n\n    devices.push({\n        key: String(cam.key || (\"camara_\" + (devices.length + 1))),\n        label: String(cam.name || cam.key || \"Cámara\"),\n        ip: String(cam.ip),\n        snapshot_path: String(cam.snapshot_path || \"/ISAPI/Streaming/channels/1/picture\")\n    });\n}\n\nif (!devices.length) {\n    node.warn(\"No hay dispositivos configurados para captura\");\n}\n\n// La lista esperada queda guardada por captura.\n// El colector se adapta automáticamente a esta cantidad.\nflow.set(\"capture_required_\" + capture_id, devices.map(d => d.key));\nflow.set(\"capture_imgs_\" + capture_id, {});\nflow.set(\"capture_failed_\" + capture_id, {});\n\nconst msgs = devices.map(dev => {\n    const m = RED.util.cloneMessage(msg);\n\n    m.capture_id = capture_id;\n    m.camera_key = dev.key;\n    m.camera_label = dev.label;\n    m.url = \"http://\" + dev.ip + dev.snapshot_path;\n    m.payload = null;\n\n    return m;\n});\n\nconst timeoutMsg = RED.util.cloneMessage(msg);\ntimeoutMsg.capture_id = capture_id;\ntimeoutMsg.capture_timeout = true;\ntimeoutMsg.timeout_ms = TIMEOUT_MS;\n\nsetTimeout(() => {\n    node.send([null, timeoutMsg]);\n}, TIMEOUT_MS);\n\nnode.status({\n    fill: \"blue\",\n    shape: \"dot\",\n    text:\n        \"pidiendo \" + devices.length +\n        \" foto(s), timeout \" + (TIMEOUT_MS / 1000) + \"s\"\n});\n\nreturn [msgs, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1260,
+    "y": 140,
+    "wires": [
+      [
+        "b7e4ad008767e744"
+      ],
+      [
+        "84c47076801b423e"
+      ]
+    ]
+  },
+  {
+    "id": "b7e4ad008767e744",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "GET Cámara (Digest · ENV HIK_USER/HIK_PASSWORD)",
+    "method": "GET",
+    "ret": "bin",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "digest",
+    "senderr": true,
+    "headers": [],
+    "x": 1540,
+    "y": 140,
+    "wires": [
+      [
+        "6be6f5b1ceb16df5"
+      ]
+    ],
+    "info": "Usa las mismas variables de entorno HIK_USER y HIK_PASSWORD que el nodo HIK REQUEST ÚNICO.",
+    "credentials": {
+      "user": "${HIK_USER}",
+      "password": "${HIK_PASSWORD}"
+    }
+  },
+  {
+    "id": "6be6f5b1ceb16df5",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Normalizar imagen",
+    "func": "// Normaliza la respuesta de cada cámara Hikvision.\n// Si viene imagen JPEG, la deja lista para multipart.\n// Si viene 401/XML/HTML/error, NO traba el flujo:\n// manda una marca de fallo para que el proceso avance igual.\n\nfunction failPhoto(reason, details) {\n    const cameraKey = msg.camera_key || \"camara\";\n    const cameraLabel = msg.camera_label || cameraKey;\n\n    node.warn(cameraLabel + \" FOTO FALLIDA: \" + reason);\n\n    msg.payload = {\n        ok: false,\n        failed: true,\n        reason,\n        details: details || \"\",\n        capture_id: msg.capture_id,\n        camera_key: cameraKey,\n        camera_label: cameraLabel\n    };\n\n    return msg;\n}\n\nlet buf = msg.payload;\n\nconst cameraKey = msg.camera_key || \"camara\";\nconst cameraLabel = msg.camera_label || cameraKey;\nconst filename = cameraKey + \".jpg\";\n\n// Si el HTTP Request devolvió error propio\nif (msg.error) {\n    return failPhoto(\"HTTP_REQUEST_ERROR\", String(msg.error.message || msg.error));\n}\n\n// Si no vino Buffer\nif (!Buffer.isBuffer(buf)) {\n    return failPhoto(\"PAYLOAD_NO_ES_BUFFER\", typeof buf);\n}\n\n// Si vino vacío\nif (!buf || buf.length === 0) {\n    return failPhoto(\"RESPUESTA_VACIA\", \"\");\n}\n\n// 1) Si ya viene JPEG directo, usarlo así nomás.\nif (buf.length >= 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) {\n    msg.payload = {\n        ok: true,\n        file: {\n            value: buf,\n            options: {\n                filename,\n                contentType: \"image/jpeg\"\n            }\n        },\n        capture_id: msg.capture_id,\n        camera_key: cameraKey,\n        camera_label: cameraLabel\n    };\n\n    node.status({\n        fill: \"green\",\n        shape: \"dot\",\n        text: cameraLabel + \" OK\"\n    });\n\n    return msg;\n}\n\n// 2) Si viene como texto, HTML, XML o multipart, inspeccionarlo.\nlet txt = buf.toString(\"latin1\");\nlet head = txt.slice(0, 500);\n\n// Detección clara de 401\nif (\n    head.indexOf(\"401\") >= 0 ||\n    head.toLowerCase().indexOf(\"unauthorized\") >= 0 ||\n    head.indexOf(\"<statusValue>401</statusValue>\") >= 0\n) {\n    return failPhoto(\"401_UNAUTHORIZED\", head.slice(0, 300));\n}\n\n// XML de error\nif (\n    head.indexOf(\"<?xml\") >= 0 ||\n    head.indexOf(\"<ResponseStatus\") >= 0 ||\n    head.indexOf(\"<userCheck\") >= 0\n) {\n    return failPhoto(\"XML_ERROR_NO_IMAGEN\", head.slice(0, 300));\n}\n\n// HTML de error\nif (\n    head.toLowerCase().indexOf(\"<!doctype html\") >= 0 ||\n    head.toLowerCase().indexOf(\"<html\") >= 0\n) {\n    return failPhoto(\"HTML_ERROR_NO_IMAGEN\", head.slice(0, 300));\n}\n\n// 3) Buscar inicio JPEG por firma binaria FF D8 FF.\nlet start = -1;\n\nfor (let n = 0; n < buf.length - 2; n++) {\n    if (buf[n] === 0xFF && buf[n + 1] === 0xD8 && buf[n + 2] === 0xFF) {\n        start = n;\n        break;\n    }\n}\n\nif (start < 0) {\n    return failPhoto(\"NO_ENCONTRE_INICIO_JPEG\", head.slice(0, 300));\n}\n\n// 4) Buscar fin JPEG por firma FF D9.\nlet end = -1;\n\nfor (let n = buf.length - 2; n >= start; n--) {\n    if (buf[n] === 0xFF && buf[n + 1] === 0xD9) {\n        end = n + 1;\n        break;\n    }\n}\n\nif (end < 0) {\n    return failPhoto(\"NO_ENCONTRE_FIN_JPEG\", head.slice(0, 300));\n}\n\nlet jpg = buf.subarray(start, end + 1);\n\nmsg.payload = {\n    ok: true,\n    file: {\n        value: jpg,\n        options: {\n            filename,\n            contentType: \"image/jpeg\"\n        }\n    },\n    capture_id: msg.capture_id,\n    camera_key: cameraKey,\n    camera_label: cameraLabel\n};\n\nnode.status({\n    fill: \"green\",\n    shape: \"dot\",\n    text: cameraLabel + \" JPEG OK\"\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1700,
+    "y": 140,
+    "wires": [
+      [
+        "84c47076801b423e"
+      ]
+    ]
+  },
+  {
+    "id": "84c47076801b423e",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Esperar fotos y armar multipart",
+    "func": "// ======================================================\n// COLECTOR DE FOTOS DINAMICO\n// Funciona con cualquier cantidad de dispositivos.\n// ======================================================\n\nfunction defaultRequired() {\n    const cfg = flow.get(\"hik_config\") || {};\n    const out = [];\n\n    const ac = cfg.access_control || {};\n    if (ac.capture !== false && ac.ip) {\n        out.push(String(ac.key || \"teclado\"));\n    }\n\n    const cameras = Array.isArray(cfg.cameras) ? cfg.cameras : [];\n    for (const cam of cameras) {\n        if (!cam || cam.capture === false || !cam.ip) continue;\n        out.push(String(cam.key || (\"camara_\" + (out.length + 1))));\n    }\n\n    return out;\n}\n\nfunction cleanCapture(capture_id, doneKey) {\n    flow.set(\"capture_imgs_\" + capture_id, null);\n    flow.set(\"capture_failed_\" + capture_id, null);\n    flow.set(\"capture_\" + capture_id, null);\n    flow.set(\"capture_required_\" + capture_id, null);\n\n    setTimeout(() => {\n        flow.set(doneKey, null);\n    }, 60000);\n}\n\nfunction buildAndSend(msg, capture_id, reason) {\n    const doneKey = \"capture_done_\" + capture_id;\n\n    if (flow.get(doneKey)) {\n        node.status({\n            fill: \"grey\",\n            shape: \"ring\",\n            text: \"captura ya enviada, ignoro \" + reason\n        });\n        return null;\n    }\n\n    const meta = flow.get(\"capture_\" + capture_id);\n\n    if (!meta) {\n        node.status({\n            fill: \"grey\",\n            shape: \"ring\",\n            text: \"sin metadata, ignoro \" + reason\n        });\n        return null;\n    }\n\n    const imgs = flow.get(\"capture_imgs_\" + capture_id) || {};\n    const failed = flow.get(\"capture_failed_\" + capture_id) || {};\n    const required = flow.get(\"capture_required_\" + capture_id) || defaultRequired();\n\n    flow.set(doneKey, true);\n\n    const present = required.filter(k => imgs[k]);\n    const failedKeys = required.filter(k => failed[k]);\n    const missing = required.filter(k => !imgs[k] && !failed[k]);\n\n    const failedText = failedKeys.map(k => {\n        const f = failed[k] || {};\n        return k + \":\" + (f.reason || \"ERROR\");\n    });\n\n    node.status({\n        fill: present.length === required.length ? \"green\" : \"yellow\",\n        shape: \"dot\",\n        text:\n            reason +\n            \" | fotos OK: \" + present.length +\n            \"/\" + required.length\n    });\n\n    const cfg = flow.get(\"hik_config\") || {};\n    const backend = String(cfg.backend_base || \"https://cargaderomuni.onrender.com\").replace(/\\/$/, \"\");\n\n    msg.method = \"POST\";\n    msg.url = backend + \"/water/dispatch/start\";\n    msg.headers = {\n        \"content-type\": \"multipart/form-data\",\n    };\n\n    msg.payload = {\n        station_id: meta.station_id,\n        employee_no: meta.employee_no || \"\",\n        card_no: meta.card_no || \"\",\n        access_method: meta.access_method || \"manual\",\n        note:\n            meta.note +\n            \" | \" + reason +\n            \" | fotos_ok=\" + present.join(\",\") +\n            \" | fotos_fallidas=\" + failedText.join(\",\") +\n            \" | fotos_sin_respuesta=\" + missing.join(\",\")\n    };\n\n    if (meta.company_code) {\n        msg.payload.company_code = meta.company_code;\n    }\n\n    // Cantidad dinámica: file1, file2, file3 ... fileN\n    present.forEach((key, index) => {\n        msg.payload[\"file\" + (index + 1)] = imgs[key];\n    });\n\n    cleanCapture(capture_id, doneKey);\n\n    return msg;\n}\n\nfunction allFinished(capture_id) {\n    const imgs = flow.get(\"capture_imgs_\" + capture_id) || {};\n    const failed = flow.get(\"capture_failed_\" + capture_id) || {};\n    const required = flow.get(\"capture_required_\" + capture_id) || defaultRequired();\n\n    return required.every(k => imgs[k] || failed[k]);\n}\n\n// ----------------------------------------------------\n// 1) Timeout\n// ----------------------------------------------------\nif (msg.capture_timeout === true) {\n    const capture_id = msg.capture_id;\n\n    if (!capture_id) {\n        node.warn(\"Llegó timeout sin capture_id\");\n        return null;\n    }\n\n    return buildAndSend(msg, capture_id, \"TIMEOUT_CAPTURA\");\n}\n\n// ----------------------------------------------------\n// 2) Resultado de una cámara\n// ----------------------------------------------------\nconst p = msg.payload || {};\nconst capture_id = p.capture_id;\nconst camera_key = p.camera_key;\nconst camera_label = p.camera_label || camera_key;\n\nif (!capture_id) {\n    node.error(\"No llegó capture_id\", msg);\n    return null;\n}\n\nif (!camera_key) {\n    node.error(\"No llegó camera_key\", msg);\n    return null;\n}\n\nif (flow.get(\"capture_done_\" + capture_id)) {\n    node.status({\n        fill: \"grey\",\n        shape: \"ring\",\n        text: \"mensaje tardío ignorado: \" + camera_label\n    });\n    return null;\n}\n\nif (p.ok === true && p.file) {\n    const storeKey = \"capture_imgs_\" + capture_id;\n    const imgs = flow.get(storeKey) || {};\n\n    imgs[camera_key] = p.file;\n    flow.set(storeKey, imgs);\n\n    node.status({\n        fill: \"blue\",\n        shape: \"dot\",\n        text: camera_label + \" OK\"\n    });\n}\nelse if (p.failed === true) {\n    const failKey = \"capture_failed_\" + capture_id;\n    const failed = flow.get(failKey) || {};\n\n    failed[camera_key] = {\n        reason: p.reason || \"ERROR\",\n        details: p.details || \"\",\n        camera_label\n    };\n\n    flow.set(failKey, failed);\n\n    node.status({\n        fill: \"yellow\",\n        shape: \"ring\",\n        text: camera_label + \" falló: \" + (p.reason || \"ERROR\")\n    });\n}\nelse {\n    node.warn(\"Mensaje de cámara sin foto ni fallo: \" + camera_label);\n    return null;\n}\n\nif (allFinished(capture_id)) {\n    const imgs = flow.get(\"capture_imgs_\" + capture_id) || {};\n    const required = flow.get(\"capture_required_\" + capture_id) || defaultRequired();\n    const present = required.filter(k => imgs[k]);\n\n    if (present.length === required.length) {\n        return buildAndSend(msg, capture_id, \"FOTOS_COMPLETAS\");\n    }\n\n    return buildAndSend(msg, capture_id, \"FOTOS_TERMINADAS_CON_ERRORES\");\n}\n\nconst imgs = flow.get(\"capture_imgs_\" + capture_id) || {};\nconst failed = flow.get(\"capture_failed_\" + capture_id) || {};\nconst required = flow.get(\"capture_required_\" + capture_id) || defaultRequired();\nconst pending = required.filter(k => !imgs[k] && !failed[k]);\n\nnode.status({\n    fill: \"blue\",\n    shape: \"ring\",\n    text: \"pendientes: \" + pending.join(\", \")\n});\n\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1940,
+    "y": 140,
+    "wires": [
+      [
+        "6743c701d8be18cb"
+      ]
+    ]
+  },
+  {
+    "id": "6743c701d8be18cb",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "POST water/dispatch/start",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 2200,
+    "y": 140,
+    "wires": [
+      [
+        "8ad55690801c3b02"
+      ]
+    ]
+  },
+  {
+    "id": "8ad55690801c3b02",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Actualizar Litros · estado BOMBA",
+    "func": "if ((flow.get(\"hik_config\") || {}).test_mode !== false) return null;\n// ======================================================\n// ACTUALIZAR LITROS\n// - Recibe respuesta del backend /water/dispatch/start\n// - Recibe estado real de BOMBA (I0.2) desde S7\n// - Cuenta litros mientras la bomba está ON\n// - Actualiza backend cada 10 s y al apagar manda final\n// ======================================================\n\nconst LIVE_UPDATE_MS = 10000; // actualizar backend cada 10 segundos\n\nfunction dbg(kind, data) {\n    return {\n        payload: {\n            kind,\n            ...data\n        },\n        _ts: new Date().toISOString()\n    };\n}\n\nfunction getStartIdFromMsg(msg) {\n    const p = msg && msg.payload;\n\n    if (\n        p &&\n        typeof p === \"object\" &&\n        p.ok === true &&\n        (typeof p.id === \"number\" || typeof p.id === \"string\")\n    ) {\n        const n = Number(p.id);\n\n        if (isFinite(n) && n > 0) {\n            return n;\n        }\n    }\n\n    return null;\n}\n\nfunction normalizeBool(value) {\n    if (value === null || value === undefined) return null;\n\n    if (typeof value === \"boolean\") {\n        return value;\n    }\n\n    if (typeof value === \"number\") {\n        return value !== 0;\n    }\n\n    if (typeof value === \"string\") {\n        const s = value.trim().toLowerCase();\n\n        if ([\"true\", \"1\", \"on\", \"run\", \"running\", \"encendido\", \"si\", \"sí\"].includes(s)) {\n            return true;\n        }\n\n        if ([\"false\", \"0\", \"off\", \"stop\", \"stopped\", \"apagado\", \"no\"].includes(s)) {\n            return false;\n        }\n\n        return null;\n    }\n\n    if (Array.isArray(value)) {\n        if (value.length === 0) return null;\n        return normalizeBool(value[0]);\n    }\n\n    if (typeof value === \"object\") {\n        // Algunos nodos S7 devuelven { payload: true }, { value: 1 }, etc.\n        const keys = [\n            \"CONTAR LITROS\",\n            \"Q0.0\",\n            \"q0_0\",\n            \"value\",\n            \"state\",\n            \"data\",\n            \"payload\"\n        ];\n\n        for (const k of keys) {\n            if (Object.prototype.hasOwnProperty.call(value, k)) {\n                return normalizeBool(value[k]);\n            }\n        }\n\n        return null;\n    }\n\n    return null;\n}\n\nfunction makeLitersRequest(dispatch_id, liters, extra) {\n    return {\n        method: \"POST\",\n        url: \"https://cargaderomuni.onrender.com/water/dispatch/\" + dispatch_id + \"/liters\",\n        headers: {\n            \"Content-Type\": \"application/json\"\n        },\n        payload: {\n            liters\n        },\n        dispatch_id,\n        liters,\n        ...extra\n    };\n}\n\nfunction getFlowLpm() {\n    let flow_lpm = flow.get(\"flow_lpm\");\n\n    if (flow_lpm === null || flow_lpm === undefined) {\n        flow_lpm = 600;\n        flow.set(\"flow_lpm\", flow_lpm);\n    }\n\n    flow_lpm = Number(flow_lpm);\n\n    if (!isFinite(flow_lpm) || flow_lpm <= 0) {\n        flow_lpm = 600;\n        flow.set(\"flow_lpm\", flow_lpm);\n    }\n\n    return flow_lpm;\n}\n\nfunction calcLiters(startTs, now, flow_lpm) {\n    if (!startTs) return 0;\n\n    const elapsedMs = Math.max(0, now - startTs);\n    const liters = Math.max(0, Math.round((elapsedMs / 60000) * flow_lpm));\n\n    return {\n        liters,\n        elapsed_sec: Math.round(elapsedMs / 1000)\n    };\n}\n\n// ======================================================\n// 1) Si llega respuesta del backend /dispatch/start\n// ======================================================\n\n// Si el POST de inicio falló, liberar el bloqueo para permitir reintento.\nif (msg.error || (msg.statusCode && Number(msg.statusCode) >= 400)) {\n    flow.set(\"dispatch_start_pending\", false);\n    flow.set(\"dispatch_start_source\", null);\n\n    node.status({\n        fill: \"red\",\n        shape: \"ring\",\n        text: \"falló inicio de despacho\"\n    });\n\n    return [\n        null,\n        dbg(\"START_ERROR\", {\n            statusCode: msg.statusCode || null,\n            error: msg.error ? (msg.error.message || String(msg.error)) : null,\n            payload: msg.payload\n        })\n    ];\n}\n\nconst startId = getStartIdFromMsg(msg);\n\nif (startId) {\n    const now = Date.now();\n\n    flow.set(\"current_dispatch_id\", startId);\n    flow.set(\"current_dispatch_started_at\", now);\n    flow.set(\"dispatch_start_pending\", false);\n    flow.set(\"dispatch_start_source\", null);\n\n    // Si la bomba ya venía encendida, asegurar que el contador esté activo.\n    const lastQ = flow.get(\"last_q0_0\");\n\n    if (lastQ === true && !flow.get(\"liters_active\")) {\n        flow.set(\"liters_active\", true);\n        flow.set(\"liters_startTs\", now);\n        flow.set(\"liters_current\", 0);\n        flow.set(\"liters_last_sent_at\", 0);\n    }\n\n    node.status({\n        fill: \"green\",\n        shape: \"dot\",\n        text: \"dispatch_id=\" + startId\n    });\n\n    return [\n        null,\n        dbg(\"START_SAVED\", {\n            current_dispatch_id: startId,\n            bomba_last: lastQ === true\n        })\n    ];\n}\n\n// ======================================================\n// 2) Si llega estado desde S7\n// ======================================================\n\nconst q = normalizeBool(msg.payload);\n\nif (q === null) {\n    return [\n        null,\n        dbg(\"SKIP\", {\n            reason: \"payload_no_convertible_a_booleano\",\n            got: msg.payload,\n            type: typeof msg.payload\n        })\n    ];\n}\n\nflow.set(\"last_q0_0\", q);\n\nconst now = Date.now();\nconst flow_lpm = getFlowLpm();\n\nlet active = flow.get(\"liters_active\") || false;\nlet startTs = flow.get(\"liters_startTs\") || null;\nlet dispatch_id = flow.get(\"current_dispatch_id\") || null;\n\n// ======================================================\n// 3) Q0.0 ON: contar y actualizar cada 10 s\n// ======================================================\n\nif (q === true) {\n    if (!active) {\n        active = true;\n        startTs = now;\n\n        flow.set(\"liters_active\", true);\n        flow.set(\"liters_startTs\", startTs);\n        flow.set(\"liters_current\", 0);\n        flow.set(\"liters_last_sent_at\", 0);\n\n        node.status({\n            fill: \"blue\",\n            shape: \"dot\",\n            text: \"BOMBA ON - contando\"\n        });\n\n        return [\n            null,\n            dbg(\"RUNNING_START\", {\n                q0_0: true,\n                liters: 0,\n                elapsed_sec: 0,\n                flow_lpm,\n                dispatch_id\n            })\n        ];\n    }\n\n    const calc = calcLiters(startTs, now, flow_lpm);\n\n    flow.set(\"liters_current\", calc.liters);\n\n    node.status({\n        fill: \"blue\",\n        shape: \"dot\",\n        text: \"ON \" + calc.liters + \" L\"\n    });\n\n    const lastSent = Number(flow.get(\"liters_last_sent_at\") || 0);\n\n    // Actualización en vivo cada 10 s, si ya tenemos dispatch_id\n    if (dispatch_id && now - lastSent >= LIVE_UPDATE_MS) {\n        flow.set(\"liters_last_sent_at\", now);\n\n        const req = makeLitersRequest(dispatch_id, calc.liters, {\n            elapsed_sec: calc.elapsed_sec,\n            flow_lpm,\n            live_update: true\n        });\n\n        return [\n            req,\n            dbg(\"RUNNING_SENT\", {\n                q0_0: true,\n                liters: calc.liters,\n                elapsed_sec: calc.elapsed_sec,\n                flow_lpm,\n                dispatch_id\n            })\n        ];\n    }\n\n    return [\n        null,\n        dbg(\"RUNNING\", {\n            q0_0: true,\n            liters: calc.liters,\n            elapsed_sec: calc.elapsed_sec,\n            flow_lpm,\n            dispatch_id\n        })\n    ];\n}\n\n// ======================================================\n// 4) Q0.0 OFF: mandar valor final\n// ======================================================\n\nif (q === false) {\n    if (!active || !startTs) {\n        node.status({\n            fill: \"grey\",\n            shape: \"ring\",\n            text: \"BOMBA OFF - sin conteo activo\"\n        });\n\n        return [\n            null,\n            dbg(\"OFF_NO_ACTIVE\", {\n                q0_0: false,\n                dispatch_id\n            })\n        ];\n    }\n\n    const calc = calcLiters(startTs, now, flow_lpm);\n\n    flow.set(\"liters_active\", false);\n    flow.set(\"liters_startTs\", null);\n    flow.set(\"liters_current\", 0);\n    flow.set(\"liters_last_sent_at\", 0);\n\n    node.status({\n        fill: \"yellow\",\n        shape: \"dot\",\n        text: \"BOMBA OFF -> \" + calc.liters + \" L\"\n    });\n\n    if (!dispatch_id) {\n        return [\n            null,\n            dbg(\"OFF_NO_DISPATCH\", {\n                q0_0: false,\n                liters: calc.liters,\n                elapsed_sec: calc.elapsed_sec,\n                flow_lpm\n            })\n        ];\n    }\n\n    const req = makeLitersRequest(dispatch_id, calc.liters, {\n        elapsed_sec: calc.elapsed_sec,\n        flow_lpm,\n        final_update: true\n    });\n\n    // Limpiar despacho actual después del cierre\n    flow.set(\"current_dispatch_id\", null);\n    flow.set(\"current_dispatch_started_at\", null);\n    flow.set(\"dispatch_start_pending\", false);\n    flow.set(\"dispatch_start_source\", null);\n\n    return [\n        req,\n        dbg(\"OFF_SENT\", {\n            q0_0: false,\n            liters: calc.liters,\n            elapsed_sec: calc.elapsed_sec,\n            flow_lpm,\n            dispatch_id\n        })\n    ];\n}\n\nreturn [\n    null,\n    dbg(\"SKIP\", {\n        reason: \"unreachable\"\n    })\n];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 2500,
+    "y": 140,
+    "wires": [
+      [
+        "39e3c231f405a16e"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "39e3c231f405a16e",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "POST /dispatch/{id}/liters",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "x": 2750,
+    "y": 140,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "1c1ea8ba212d37fb",
+    "type": "inject",
+    "z": "16eae00c387784ac",
+    "name": "Sincronizar (manual inicial; luego cada 5 min)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "300",
+    "crontab": "",
+    "once": false,
+    "onceDelay": "2",
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 230,
+    "y": 920,
+    "wires": [
+      [
+        "c31ac59d73b31d61"
+      ]
+    ]
+  },
+  {
+    "id": "c31ac59d73b31d61",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "CONFIG central",
+    "func": "// ======================================================\n// CONFIG CENTRAL PRODUCCION\n// ESTE ES EL UNICO LUGAR PARA CONFIGURAR LA ESTACION\n// Y LA CANTIDAD DE CAMARAS.\n// ======================================================\n\nconst accessControl = {\n    key: \"teclado\",\n    name: \"Teclado Hikvision\",\n    ip: env.get(\"HIK_IP\") || \"192.168.1.5\",\n    capture: true,\n    health: true,\n    snapshot_path: \"/ISAPI/Streaming/channels/1/picture\",\n    health_path: \"/ISAPI/System/deviceInfo\"\n};\n\n// Agregar o quitar cámaras solamente acá.\n// La cantidad es dinámica.\nconst cameras = [\n    \n];\n\nconst cfg = {\n    station_id: \"3\",\n    test_mode: true, // Sin despachos/telemetría: cambiar a false tras probar RFID.\n\n    // Compatibilidad con los nodos de sincronización de usuarios.\n    hik_ip: accessControl.ip,\n\n    access_control: accessControl,\n    cameras: cameras,\n\n    backend_base: \"https://cargaderomuni.onrender.com\",\n\n    // Usuarios activos\n    beginTime: \"2025-01-01T00:00:00\",\n    endTime: \"2037-12-31T23:59:59\",\n\n    // Usuarios inactivos: quedan CADUCADOS, no eliminados.\n    disabledBeginTime: \"2000-01-01T00:00:00\",\n    disabledEndTime: \"2000-01-02T00:00:00\",\n\n    // Hikvision puerta / plan\n    doorNo: 1,\n    doorRight: \"1\",\n    planTemplateNo: \"1\",\n\n    // HTTP\n    timeoutMs: 10000,\n    capture_timeout_ms: 5000\n};\n\nflow.set(\"hik_config\", cfg);\nmsg.hik_config = cfg;\n\nnode.status({\n    fill: \"green\",\n    shape: \"dot\",\n    text:\n        \"estación \" + cfg.station_id +\n        \" | cámaras=\" + cfg.cameras.length +\n        \" | teclado=\" + (cfg.access_control.capture ? \"foto\" : \"sin foto\")\n});\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 920,
+    "wires": [
+      [
+        "d20d07ddcb8e671a"
+      ]
+    ],
+    "info": "Estación PRUEBA (3). HIK_IP debe ser la IP real del teclado, distinta de la PC. test_mode=true permite sincronizar y muestra lecturas sin registrar despachos ni telemetría."
+  },
+  {
+    "id": "d20d07ddcb8e671a",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "preparar GET usuarios backend",
+    "func": "node.warn('Inicio de sincronización RFID sin token');\nconst cfg=flow.get('hik_config') || {};\nif(flow.get('hik_sync_running'))return null;\nmsg.method='GET';msg.url=cfg.backend_base.replace(/\\/$/,'')+'/company/hik-users?version=2&station_id='+encodeURIComponent(cfg.station_id);\nmsg.headers={'Accept':'application/json'};\nmsg.requestTimeout=Number(cfg.timeoutMs || 10000);msg.payload=null;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 750,
+    "y": 920,
+    "wires": [
+      [
+        "f70275f41c3bfb1b"
+      ]
+    ]
+  },
+  {
+    "id": "f70275f41c3bfb1b",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "GET backend · camioneros + empresas (v2)",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 1030,
+    "y": 920,
+    "wires": [
+      [
+        "c2ef13f9761a33b9"
+      ]
+    ]
+  },
+  {
+    "id": "c2ef13f9761a33b9",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "map usuarios backend",
+    "func": "if(msg.error || Number(msg.statusCode)!==200){node.error('No se obtuvo inventario (HTTP '+String(msg.statusCode || 'sin respuesta')+'); no se modifica el teclado');return null;}\nmsg.sync_start=true;delete msg.headers;return msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1300,
+    "y": 920,
+    "wires": [
+      [
+        "aac54334e4876540"
+      ]
+    ]
+  },
+  {
+    "id": "06c1216077b18944",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "HIK REQUEST ÚNICO (Digest · ENV HIK_USER/HIK_PASSWORD)",
+    "method": "use",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "digest",
+    "senderr": true,
+    "headers": [],
+    "x": 2450,
+    "y": 920,
+    "wires": [
+      [
+        "aac54334e4876540"
+      ]
+    ],
+    "info": "Credenciales centralizadas Hikvision. Configurar variables de entorno HIK_USER y HIK_PASSWORD en Node-RED. Usar este único nodo para teclado y cámaras.",
+    "credentials": {
+      "user": "${HIK_USER}",
+      "password": "${HIK_PASSWORD}"
+    }
+  },
+  {
+    "id": "aac54334e4876540",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Sincronización serial · usuarios y tarjetas",
+    "func": "// Four outputs: sanitized result, Digest request, sanitized error, health response.\n// Serial requests: no user is deleted/recreated during ordinary synchronization.\nif (msg.hik_action === 'health_probe') return [null,null,null,msg];\nlet s = context.get('run');\nconst cfg = flow.get('hik_config') || {};\nfunction fail(reason) {\n    const who = s && s.user ? s.user.employeeNo : null;\n    const timer = context.get('watchdog'); if (timer) clearTimeout(timer);\n    context.set('watchdog', null); context.set('run', null);\n    flow.set('hik_sync_running', false);\n    node.status({fill:'red',shape:'ring',text:reason});\n    return [null,null,{payload:{ok:false,reason,employeeNo:who}},null];\n}\nfunction request(action, method, path, payload) {\n    s.action = action; context.set('run',s);\n    const old = context.get('watchdog'); if (old) clearTimeout(old);\n    context.set('watchdog',setTimeout(()=> {\n        const current=context.get('run');\n        if(current && current.id===s.id) node.send(fail('Timeout de sincronización: '+action));\n    }, Number(cfg.timeoutMs || 10000)+5000));\n    return [null,{sync_run:s.id,hik_action:'sync_v2',method,\n        url:'http://'+cfg.hik_ip+path+'?format=json',\n        headers:{'Content-Type':'application/json','Accept':'application/json'},\n        requestTimeout:Number(cfg.timeoutMs || 10000),payload:JSON.stringify(payload)},null,null];\n}\nfunction localTime(v) {\n    const d=new Date(v), pad=x=>String(x).padStart(2,'0');\n    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;\n}\nfunction userBody(enabled) {\n    const u=s.user;\n    const info={employeeNo:u.employeeNo,name:u.name,userType:'normal',\n        doorRight:cfg.doorRight || '1',RightPlan:[{doorNo:Number(cfg.doorNo || 1),planTemplateNo:String(cfg.planTemplateNo || '1')}],\n        Valid:{enable:true,timeType:'local',beginTime:enabled?cfg.beginTime:cfg.disabledBeginTime,\n            endTime:enabled?(u.valid_until?localTime(u.valid_until):cfg.endTime):cfg.disabledEndTime}};\n    if(u.kind==='driver') info.userVerifyMode='card';\n    if(u.kind==='company' && u.password) {info.password=u.password;info.localPassword=u.password;}\n    return {UserInfo:info};\n}\nfunction allUsers() {\n    return request('inventory','POST','/ISAPI/AccessControl/UserInfo/Search',{\n        UserInfoSearchCond:{searchID:s.id,searchResultPosition:s.position,maxResults:100}});\n}\nfunction searchCards(action) {\n    return request(action,'POST','/ISAPI/AccessControl/CardInfo/Search',{\n        CardInfoSearchCond:{searchID:s.id+'-cards-'+s.index+'-'+action,searchResultPosition:s.position,\n            maxResults:100,EmployeeNoList:[{employeeNo:s.user.employeeNo}]}});\n}\nfunction startUser() {\n    s.index++;\n    if(s.index>=s.jobs.length) {\n        const summary={ok:true,action:'sync_v2',processed:s.desired.length,operations:s.jobs.length,drivers:s.desired.filter(u=>u.kind==='driver').length,\n            disabled_orphans:s.orphans};\n        context.set('run',null); flow.set('hik_sync_running',false);\n        node.status({fill:'green',shape:'dot',text:'Sincronizados: '+s.jobs.length});\n        return [{payload:summary},null,null,null];\n    }\n    s.user=s.jobs[s.index];\n    node.status({fill:'blue',shape:'dot',text:'Sincronizando '+s.user.employeeNo});\n    const exists=s.existing.some(u=>u.employeeNo===s.user.employeeNo);\n    const method=exists?'PUT':'POST', path=exists?'Modify':'Record';\n    return request('user_write',method,'/ISAPI/AccessControl/UserInfo/'+path,\n        userBody(s.user.kind==='company' && s.user.active));\n}\nfunction cardJob() {\n    const job=s.cardJobs.shift();\n    if(!job) {s.position=0;s.cards=[];return searchCards('verify_cards');}\n    if(job.action==='delete') return request('card_write','PUT','/ISAPI/AccessControl/CardInfo/Delete',{\n        CardInfoDelCond:{CardNoList:[{cardNo:job.cardNo}]}});\n    return request('card_write','POST','/ISAPI/AccessControl/CardInfo/Record',{\n        CardInfo:{employeeNo:s.user.employeeNo,cardNo:job.cardNo,cardType:'normalCard'}});\n}\nfunction verifyUser() {\n    return request('verify_user','POST','/ISAPI/AccessControl/UserInfo/Search',{\n        UserInfoSearchCond:{searchID:s.id+'-verify-'+s.index,searchResultPosition:0,maxResults:10,\n            EmployeeNoList:[{employeeNo:s.user.employeeNo}]}});\n}\nif(msg.sync_start===true) {\n    if(s) return [null,null,{payload:{ok:false,reason:'Sincronización en curso'}},null];\n    const p=msg.payload;\n    if(!p || p.ok!==true || p.version!==2 || p.complete!==true || !Array.isArray(p.items) ||\n       p.count!==p.items.length || p.station_id!==String(cfg.station_id)) return fail('Inventario incompleto o estación incorrecta');\n    const nos=new Set(), cards=new Set();\n    for(const u of p.items) {\n        if(!u || typeof u.employeeNo!=='string' || !u.employeeNo || nos.has(u.employeeNo) ||\n           !['company','driver'].includes(u.kind) || typeof u.active!=='boolean' || !Array.isArray(u.cards) ||\n           typeof u.name!=='string' || (u.kind==='company' && !u.password) ||\n           (u.kind==='driver' && (!/^DRIVER-\\d+$/.test(u.employeeNo) || (u.active && (!u.company_code || !u.cards.length))))) return fail('Usuario inválido en inventario');\n        nos.add(u.employeeNo);\n        for(const c of u.cards) {if(typeof c!=='string' || !c || cards.has(c))return fail('RFID vacío o duplicado');cards.add(c);}\n    }\n    const identities={};for(const u of p.items)identities[u.employeeNo]={kind:u.kind,company_code:u.company_code,pin_user_id:u.pin_user_id,active:u.active,cards:u.cards};\n    flow.set('hik_identities',identities);flow.set('hik_identities_at',Date.now());\n    s={id:'sync-'+Date.now(),desired:p.items,existing:[],position:0,index:-1,orphans:0};\n    flow.set('hik_sync_running',true);\n    return allUsers();\n}\nif(!s || msg.sync_run!==s.id) return null; // Ignore late replies from an expired run.\nconst timer=context.get('watchdog');if(timer)clearTimeout(timer);context.set('watchdog',null);\nlet b=msg.payload;\ntry {if(typeof b==='string')b=JSON.parse(b);}catch(e){return fail('Respuesta HIK no JSON en '+s.action);}\nif(msg.error || Number(msg.statusCode)<200 || Number(msg.statusCode)>=300 || !b || typeof b!=='object')return fail('Error HTTP '+String(msg.statusCode || '')+' en '+s.action);\nconst action=s.action;\nif(['inventory','cards','verify_cards','verify_user'].includes(action)) {\n    const r=action==='cards'||action==='verify_cards'?b.CardInfoSearch:b.UserInfoSearch;\n    const key=action==='cards'||action==='verify_cards'?'CardInfo':'UserInfo';\n    if(!r || !Number.isInteger(r.totalMatches) || !Number.isInteger(r.numOfMatches) ||\n       !['OK','MORE','NO MATCH'].includes(r.responseStatusStrg) ||\n       (r.numOfMatches>0 && !Array.isArray(r[key])))return fail('Búsqueda HIK inválida en '+action);\n    const list=r[key] || [];\n    if(list.length!==r.numOfMatches || (list.length===0 && r.totalMatches>(s.position || 0)))return fail('Paginación HIK incompleta');\n    if(action==='verify_user') {\n        const u=list.find(u=>u.employeeNo===s.user.employeeNo);\n        const expected=userBody(s.user.active).UserInfo;\n        if(!u || u.name!==expected.name || !u.Valid || u.Valid.enable!==true ||\n           String(u.Valid.endTime).slice(0,19)!==expected.Valid.endTime)return fail('No se confirmó nombre/vigencia del usuario');\n        return startUser();\n    }\n    if(action==='inventory')s.existing.push(...list);else {\n        if(list.some(c=>c.employeeNo!==s.user.employeeNo || typeof c.cardNo!=='string'))return fail('Tarjetas de otro usuario o formato inválido');\n        s.cards.push(...list);\n    }\n    s.position+=list.length;\n    if(s.position<r.totalMatches)return action==='inventory'?allUsers():searchCards(action);\n    if(s.position!==r.totalMatches)return fail('Inventario HIK cambió durante la lectura');\n    if(action==='inventory') {\n        const keep=new Set(s.desired.map(u=>u.employeeNo));\n        const stale=s.existing.filter(u=>(/^DRIVER-\\d+$/.test(u.employeeNo) || /^\\d+$/.test(u.employeeNo)) && !keep.has(u.employeeNo));\n        // Orphans are expired, not deleted: prevents credential loss during migration.\n        s.orphans=stale.length;\n        const revoked=stale.map(u=>({employeeNo:u.employeeNo,name:u.name,\n            kind:/^DRIVER-\\d+$/.test(u.employeeNo)?'driver':'orphan',active:false,cards:[],phase:'revoke'}));\n        const drivers=s.desired.filter(u=>u.kind==='driver');\n        // Revoke obsolete cards for ALL drivers before assigning cards to new owners.\n        s.jobs=revoked.concat(s.desired.filter(u=>u.kind==='company'),\n            drivers.map(u=>({...u,phase:'revoke'})),drivers.map(u=>({...u,phase:'apply'})));\n        return startUser();\n    }\n    const wanted=s.user.active?s.user.cards:[], have=s.cards.map(c=>c.cardNo);\n    if(action==='cards') {\n        s.cardJobs=have.filter(c=>!wanted.includes(c)).map(cardNo=>({action:'delete',cardNo}))\n            .concat(s.user.phase==='revoke'?[]:wanted.filter(c=>!have.includes(c)).map(cardNo=>({action:'add',cardNo})));\n        return cardJob();\n    }\n    if(s.user.phase==='revoke') {\n        if(have.some(c=>!wanted.includes(c)))return fail('No se confirmó la baja de tarjeta');\n        return startUser();\n    }\n    if(have.length!==wanted.length || wanted.some(c=>!have.includes(c)))return fail('No se confirmaron las tarjetas');\n    return request('user_enable','PUT','/ISAPI/AccessControl/UserInfo/Modify',userBody(s.user.active));\n}\nif(Number(b.statusCode)!==1 || String(b.statusString).toUpperCase()!=='OK')return fail('HIK rechazó '+action+': '+String(b.subStatusCode || b.statusCode));\nif(action==='user_write') {\n    if(s.user.kind==='driver'){s.position=0;s.cards=[];return searchCards('cards');}\n    return verifyUser();\n}\nif(action==='card_write')return cardJob();\nif(action==='user_enable')return verifyUser();\nreturn fail('Estado desconocido');\n",
+    "outputs": 4,
+    "noerr": 0,
+    "initialize": "context.set('run',null);flow.set('hik_sync_running',false);",
+    "finalize": "const t=context.get('watchdog');if(t)clearTimeout(t);context.set('watchdog',null);context.set('run',null);flow.set('hik_sync_running',false);",
+    "libs": [],
+    "x": 2740,
+    "y": 920,
+    "wires": [
+      [
+        "rfid_debug_ok"
+      ],
+      [
+        "04445322de7f48c0"
+      ],
+      [
+        "rfid_debug_error"
+      ],
+      [
+        "c80d166ead0fc7aa"
+      ]
+    ]
+  },
+  {
+    "id": "04445322de7f48c0",
+    "type": "delay",
+    "z": "16eae00c387784ac",
+    "name": "pausa siguiente paso HIK",
+    "pauseType": "delay",
+    "timeout": "800",
+    "timeoutUnits": "milliseconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 2990,
+    "y": 920,
+    "wires": [
+      [
+        "06c1216077b18944"
+      ]
+    ]
+  },
+  {
+    "id": "f47de9c96e81a34a",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "ESCALAR S7",
+    "func": "// Lee valor desde nodo S7 y lo escala.\n// Este nodo acepta distintos formatos posibles:\n// msg.payload = 12345\n// msg.payload = \"12345\"\n// msg.payload = [12345]\n// msg.payload = { TANK: 12345 }\n// msg.payload = { value: 12345 }\n\nfunction extraerRaw(msg) {\n    const p = msg.payload;\n\n    if (typeof p === \"number\") return p;\n\n    if (typeof p === \"string\" && p.trim() !== \"\") {\n        return Number(p);\n    }\n\n    if (Array.isArray(p) && p.length > 0) {\n        return Number(p[0]);\n    }\n\n    if (p && typeof p === \"object\") {\n        if (p.TANK !== undefined) return Number(p.TANK);\n        if (p.value !== undefined) return Number(p.value);\n        if (p.data !== undefined && Array.isArray(p.data)) return Number(p.data[0]);\n        if (p.payload !== undefined) return Number(p.payload);\n    }\n\n    return NaN;\n}\n\nconst raw = extraerRaw(msg);\n\nif (!Number.isFinite(raw)) {\n    node.warn(\"No pude leer valor numérico desde S7. Payload recibido: \" + JSON.stringify(msg.payload));\n    return null;\n}\n\n// -----------------------------\n// CONFIGURACIÓN DE ESCALA\n// -----------------------------\n// Si el canal analógico en TIA está configurado como 0-20 mA:\n// 4 mA ≈ 5530 y 20 mA ≈ 27648.\n//\n// Si el canal en TIA está configurado directamente como 4-20 mA,\n// probablemente 4 mA sea 0 y 20 mA sea 27648.\n// En ese caso cambiá RAW_AT_4MA a 0.\n\nconst RAW_AT_4MA = 5530;\nconst RAW_AT_20MA = 27500;\n\n// Escala eléctrica del sensor.\nconst MA_AT_0_PERCENT = 4;\nconst MA_AT_100_PERCENT = 20;\n\n// -----------------------------\n// CÁLCULO\n// -----------------------------\nlet mA = MA_AT_0_PERCENT + ((raw - RAW_AT_4MA) * (MA_AT_100_PERCENT - MA_AT_0_PERCENT) / (RAW_AT_20MA - RAW_AT_4MA));\n\n// Limitar por seguridad.\nmA = Math.max(MA_AT_0_PERCENT, Math.min(MA_AT_100_PERCENT, mA));\n\nlet level_pct = ((mA - MA_AT_0_PERCENT) * 100) / (MA_AT_100_PERCENT - MA_AT_0_PERCENT);\nlevel_pct = Math.max(0, Math.min(100, level_pct));\n\nmsg.payload = {\n    raw: raw,\n    mA: Number(mA.toFixed(3)),\n    level_pct: Number(level_pct.toFixed(2))\n};\n\nnode.status({\n    fill: \"green\",\n    shape: \"dot\",\n    text: `raw ${raw} | ${msg.payload.mA} mA | ${msg.payload.level_pct}%`\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 380,
+    "y": 340,
+    "wires": [
+      [
+        "d692ac02df57b7af"
+      ]
+    ]
+  },
+  {
+    "id": "d692ac02df57b7af",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "JSON API",
+    "func": "if ((flow.get(\"hik_config\") || {}).test_mode !== false) return null;\nconst TANK_ID = 26;\n\nconst level_pct = Number(msg.payload.level_pct);\nconst raw_mA = Number(msg.payload.mA);\nconst raw_plc = Number(msg.payload.raw);\n\nif (!Number.isFinite(level_pct)) {\n    node.warn(\"level_pct inválido\");\n    return null;\n}\n\nmsg.headers = {\n    \"Content-Type\": \"application/json\"\n};\n\nmsg.payload = {\n    tank_id: TANK_ID,\n    level_pct: level_pct,\n    raw_mA: raw_mA,\n    raw_plc: raw_plc,\n    ts: new Date().toISOString()\n};\n\nnode.status({\n    fill: \"blue\",\n    shape: \"dot\",\n    text: `POST tanque ${TANK_ID}: ${level_pct}%`\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 580,
+    "y": 340,
+    "wires": [
+      [
+        "6fbf7e3e3d429796"
+      ]
+    ]
+  },
+  {
+    "id": "6fbf7e3e3d429796",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "POST /ingest/tank",
+    "method": "POST",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "https://diracinstrumentacion.onrender.com/ingest/tank",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [],
+    "x": 800,
+    "y": 340,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "0ba41f8853997a5c",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "BOMBA 1 → RUN/STOP heartbeat",
+    "func": "if ((flow.get(\"hik_config\") || {}).test_mode !== false) return null;\n// ======================================================\n//   S7 -> BOMBA 1 -> RUN/STOP -> HEARTBEAT\n//   Robusto para payload booleano, número, array u objeto\n// ======================================================\n\nconst PUMP_ID = 34;\nconst PLC_IP = \"192.168.1.32\";\nconst SIGNAL_NAME = \"BOMBA 1\";\n\nflow.set(\"health_plc_last_ok\", Date.now());\n\n// ------------------------------------------------------\n// 1) Extraer valor crudo recibido desde el nodo S7\n// ------------------------------------------------------\nlet raw = undefined;\n\n// Caso 1: payload directo: true / false / 1 / 0\nif (\n    msg.payload === true ||\n    msg.payload === false ||\n    typeof msg.payload === \"number\" ||\n    typeof msg.payload === \"string\"\n) {\n    raw = msg.payload;\n}\n\n// Caso 2: payload array: [true] / [1] / [0]\nelse if (Array.isArray(msg.payload)) {\n    raw = msg.payload[0];\n}\n\n// Caso 3: payload.data array\nelse if (msg.payload && Array.isArray(msg.payload.data)) {\n    raw = msg.payload.data[0];\n}\n\n// Caso 4: payload como objeto con nombre de variable\nelse if (msg.payload && Object.prototype.hasOwnProperty.call(msg.payload, SIGNAL_NAME)) {\n    raw = msg.payload[SIGNAL_NAME];\n}\n\n// Caso 5: payload.value\nelse if (msg.payload && Object.prototype.hasOwnProperty.call(msg.payload, \"value\")) {\n    raw = msg.payload.value;\n}\n\n// Caso 6: fallback completo\nelse {\n    raw = msg.payload;\n}\n\n// ------------------------------------------------------\n// 2) Normalizar valor a booleano\n// ------------------------------------------------------\nlet activa = false;\nlet quality = \"ok\";\n\nif (raw === true || raw === 1 || raw === \"1\" || raw === \"true\" || raw === \"TRUE\" || raw === \"run\" || raw === \"RUN\") {\n    activa = true;\n} else if (raw === false || raw === 0 || raw === \"0\" || raw === \"false\" || raw === \"FALSE\" || raw === \"stop\" || raw === \"STOP\") {\n    activa = false;\n} else {\n    activa = false;\n    quality = \"bad_raw_value\";\n}\n\nconst state = activa ? \"run\" : \"stop\";\n\n// ------------------------------------------------------\n// 3) Armar heartbeat para backend\n// ------------------------------------------------------\nmsg.headers = {\n    \"Content-Type\": \"application/json\"\n};\n\nmsg.payload = {\n    pump_id: PUMP_ID,\n    state: state,\n    relay: activa,\n\n    // diagnóstico\n    raw: raw,\n    signal: SIGNAL_NAME,\n    plc_ip: PLC_IP,\n    source: \"iot2050-node-red-s7\",\n    quality: quality,\n\n    // versión del flujo\n    fw: \"iot2050-s7-heartbeat-bomba1-v2.0\",\n\n    // timestamps\n    ts_unix_ms: Date.now(),\n    ts_iso: new Date().toISOString()\n};\n\n// Estado visual del nodo en Node-RED\nnode.status({\n    fill: activa ? \"green\" : \"grey\",\n    shape: \"dot\",\n    text: `${SIGNAL_NAME}: ${state} | raw=${raw}`\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 480,
+    "wires": [
+      [
+        "7d831c20bfa19d6c"
+      ]
+    ]
+  },
+  {
+    "id": "7d831c20bfa19d6c",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "POST heartbeat BOMBA 1",
+    "method": "POST",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "https://diracinstrumentacion.onrender.com/arduino-controler/heartbeat",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 720,
+    "y": 480,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "7ba4ce73d4499e16",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "BOMBA ON → despacho manual + fotos",
+    "func": "if ((flow.get(\"hik_config\") || {}).test_mode !== false) return null;\n// Dispara un despacho manual SOLO en flanco OFF -> ON.\n// Si ya hay despacho activo o uno iniciándose, no duplica.\n\nfunction normalizeBool(value) {\n    if (value === true || value === 1 || value === \"1\" || value === \"true\" || value === \"TRUE\" || value === \"run\" || value === \"RUN\") return true;\n    if (value === false || value === 0 || value === \"0\" || value === \"false\" || value === \"FALSE\" || value === \"stop\" || value === \"STOP\") return false;\n\n    if (Array.isArray(value) && value.length) return normalizeBool(value[0]);\n\n    if (value && typeof value === \"object\") {\n        if (Object.prototype.hasOwnProperty.call(value, \"Bomba\")) return normalizeBool(value.Bomba);\n        if (Object.prototype.hasOwnProperty.call(value, \"BOMBA 1\")) return normalizeBool(value[\"BOMBA 1\"]);\n        if (Object.prototype.hasOwnProperty.call(value, \"value\")) return normalizeBool(value.value);\n        if (Object.prototype.hasOwnProperty.call(value, \"state\")) return normalizeBool(value.state);\n        if (Object.prototype.hasOwnProperty.call(value, \"payload\")) return normalizeBool(value.payload);\n        if (Array.isArray(value.data) && value.data.length) return normalizeBool(value.data[0]);\n    }\n\n    return null;\n}\n\nconst q = normalizeBool(msg.payload);\nif (q === null) return null;\n\nconst prev = flow.get(\"manual_pump_last_state\");\nflow.set(\"manual_pump_last_state\", q);\n\n// Solo flanco de subida.\nif (q !== true || prev === true) return null;\n\n// Si el PIN ya creó/está creando el despacho, no duplicar.\nif (flow.get(\"current_dispatch_id\") || flow.get(\"dispatch_start_pending\")) {\n    node.status({\n        fill: \"green\",\n        shape: \"ring\",\n        text: \"bomba ON - despacho ya activo/pendiente\"\n    });\n    return null;\n}\n\nflow.set(\"dispatch_start_pending\", true);\nflow.set(\"dispatch_start_source\", \"pump\");\n\nconst cfg = flow.get(\"hik_config\") || {};\nmsg.station_id = String(cfg.station_id || \"2\");\nmsg.company_code = \"\";\nmsg.dispatch_source = \"pump\";\nmsg.payload = {\n    pump_on: true,\n    source: \"manual_pump\",\n    ts: new Date().toISOString()\n};\n\nnode.status({\n    fill: \"blue\",\n    shape: \"dot\",\n    text: \"bomba ON -> creando despacho manual\"\n});\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 470,
+    "y": 560,
+    "wires": [
+      [
+        "b8d2b9a48ab21fe7"
+      ]
+    ]
+  },
+  {
+    "id": "7404e05ac474a4e9",
+    "type": "inject",
+    "z": "16eae00c387784ac",
+    "name": "Health check cada 60 s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "60",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "5",
+    "topic": "",
+    "payload": "",
+    "payloadType": "str",
+    "x": 190,
+    "y": 1180,
+    "wires": [
+      [
+        "abaa99aea668b2a8"
+      ]
+    ]
+  },
+  {
+    "id": "abaa99aea668b2a8",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Preparar chequeos de salud",
+    "func": "if ((flow.get(\"hik_config\") || {}).test_mode !== false) return null;\n// ======================================================\n// HEALTH CHECK DINAMICO\n// Monitorea automáticamente los equipos de CONFIG central.\n// ======================================================\n\nconst cfg = flow.get(\"hik_config\") || {};\nconst backend = String(cfg.backend_base || \"https://cargaderomuni.onrender.com\").replace(/\\/$/, \"\");\nconst now = Date.now();\nconst stationId = String(cfg.station_id || \"2\");\n\nconst devices = [];\n\nconst ac = cfg.access_control || {};\nif (ac.health !== false && ac.ip) {\n    devices.push({\n        device_id: String(ac.key || \"teclado\"),\n        device_type: \"access_control\",\n        name: String(ac.name || \"Teclado Hikvision\"),\n        ip: String(ac.ip),\n        station_id: stationId,\n        health_path: String(ac.health_path || \"/ISAPI/System/deviceInfo\")\n    });\n}\n\nconst cameras = Array.isArray(cfg.cameras) ? cfg.cameras : [];\n\nfor (const cam of cameras) {\n    if (!cam || cam.health === false || !cam.ip) continue;\n\n    devices.push({\n        device_id: String(cam.key || (\"camara_\" + (devices.length + 1))),\n        device_type: \"camera\",\n        name: String(cam.name || cam.key || \"Cámara\"),\n        ip: String(cam.ip),\n        station_id: stationId,\n        health_path: String(cam.health_path || \"/ISAPI/System/status\")\n    });\n}\n\nconst hik = devices.map(d => ({\n    ...d,\n    _health_started_at: now,\n    hik_action: \"health_probe\",\n    method: \"GET\",\n    url: \"http://\" + d.ip + d.health_path,\n    timeout: 8000,\n    payload: null\n}));\n\nconst reports = [];\n\nreports.push({\n    method: \"POST\",\n    url: backend + \"/system-health/heartbeat\",\n    headers: {\"Content-Type\":\"application/json\"},\n    payload: {\n        device_id: \"node_red\",\n        device_type: \"node_red\",\n        station_id: stationId,\n        name: \"Node-RED Cargadero\",\n        ip: \"192.168.1.33\",\n        status: \"online\",\n        latency_ms: 0,\n        error: null,\n        metadata: {source:\"health-flow\"}\n    }\n});\n\nconst lastPlc = Number(flow.get(\"health_plc_last_ok\") || 0);\nconst age = lastPlc ? now - lastPlc : null;\nconst plcOnline = age !== null && age <= 10000;\n\nreports.push({\n    method: \"POST\",\n    url: backend + \"/system-health/heartbeat\",\n    headers: {\"Content-Type\":\"application/json\"},\n    payload: {\n        device_id: \"plc_cargadero\",\n        device_type: \"plc\",\n        station_id: stationId,\n        name: \"PLC Cargadero\",\n        ip: null,\n        status: plcOnline ? \"online\" : \"offline\",\n        latency_ms: age,\n        error: plcOnline ? null : \"Sin datos S7 recientes\",\n        metadata: {last_s7_age_ms:age}\n    }\n});\n\nnode.status({\n    fill: \"blue\",\n    shape: \"dot\",\n    text: \"health: \" + devices.length + \" Hikvision + PLC + Node-RED\"\n});\n\nreturn [hik, reports];",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 450,
+    "y": 1180,
+    "wires": [
+      [
+        "06c1216077b18944"
+      ],
+      [
+        "fd32dd1e30c34f9f"
+      ]
+    ]
+  },
+  {
+    "id": "c80d166ead0fc7aa",
+    "type": "function",
+    "z": "16eae00c387784ac",
+    "name": "Procesar salud HIK (credenciales compartidas)",
+    "func": "const backend = \"https://cargaderomuni.onrender.com\";\nconst code = Number(msg.statusCode || 0);\nconst elapsed = msg._health_started_at ? Math.max(0, Date.now() - msg._health_started_at) : null;\n\nlet status = \"offline\";\nlet error = null;\n\nif (msg.error) {\n  status = \"offline\";\n  error = msg.error.message || String(msg.error);\n} else if (code === 401 || code === 403) {\n  status = \"auth_error\";\n  error = \"Equipo accesible pero rechazó las credenciales\";\n} else if (code >= 200 && code < 400) {\n  status = \"online\";\n} else {\n  status = \"offline\";\n  error = code ? (\"HTTP \" + code) : \"Sin respuesta\";\n}\n\nmsg.method = \"POST\";\nmsg.url = backend + \"/system-health/heartbeat\";\nmsg.headers = {\"Content-Type\":\"application/json\"};\nmsg.payload = {\n  device_id: msg.device_id,\n  device_type: msg.device_type,\n  name: msg.name,\n  ip: msg.ip,\n  station_id: msg.station_id || String((flow.get(\"hik_config\") || {}).station_id || \"2\"),\n  status,\n  latency_ms: elapsed,\n  error,\n  metadata:{http_status:code}\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1010,
+    "y": 1140,
+    "wires": [
+      [
+        "fd32dd1e30c34f9f"
+      ]
+    ]
+  },
+  {
+    "id": "fd32dd1e30c34f9f",
+    "type": "http request",
+    "z": "16eae00c387784ac",
+    "name": "POST salud al backend",
+    "method": "use",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": true,
+    "headers": [],
+    "x": 1290,
+    "y": 1180,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "e9454aabac13e609",
+    "type": "s7 in",
+    "z": "16eae00c387784ac",
+    "endpoint": "6d4b2e5d2af9da2b",
+    "mode": "single",
+    "variable": "CONTAR LITROS",
+    "diff": false,
+    "name": "CONTAR LITROS · Q0.0 (monitor)",
+    "x": 2190,
+    "y": 220,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "4c9a10507ce5d7d1",
+    "type": "s7 in",
+    "z": "16eae00c387784ac",
+    "endpoint": "6d4b2e5d2af9da2b",
+    "mode": "single",
+    "variable": "Nivel Tanque",
+    "diff": false,
+    "name": "TANK",
+    "x": 150,
+    "y": 340,
+    "wires": [
+      [
+        "f47de9c96e81a34a"
+      ]
+    ]
+  },
+  {
+    "id": "6434f613f30358db",
+    "type": "s7 in",
+    "z": "16eae00c387784ac",
+    "endpoint": "6d4b2e5d2af9da2b",
+    "mode": "single",
+    "variable": "Bomba",
+    "diff": false,
+    "name": "BOMBA 1 · I0.2",
+    "x": 160,
+    "y": 480,
+    "wires": [
+      [
+        "0ba41f8853997a5c",
+        "7ba4ce73d4499e16",
+        "8ad55690801c3b02"
+      ]
+    ]
+  },
+  {
+    "id": "6d4b2e5d2af9da2b",
+    "type": "s7 endpoint",
+    "transport": "iso-on-tcp",
+    "address": "192.168.1.22",
+    "port": "102",
+    "rack": "0",
+    "slot": "1",
+    "localtsaphi": "01",
+    "localtsaplo": "00",
+    "remotetsaphi": "01",
+    "remotetsaplo": "00",
+    "connmode": "rack-slot",
+    "adapter": "",
+    "busaddr": "2",
+    "cycletime": "1000",
+    "timeout": "5000",
+    "name": "PLC CARGADERO",
+    "vartable": [
+      {
+        "addr": "Q0.0",
+        "name": "CONTAR LITROS"
+      },
+      {
+        "addr": "IW102",
+        "name": "Nivel Tanque"
+      },
+      {
+        "addr": "I0.2",
+        "name": "Bomba"
+      }
+    ]
+  },
+  {
+    "id": "eb9d5654b88b78b8",
+    "type": "global-config",
+    "env": [],
+    "modules": {
+      "node-red-contrib-s7": "3.1.3"
+    }
+  },
+  {
+    "id": "rfid_debug_ok",
+    "type": "debug",
+    "z": "16eae00c387784ac",
+    "name": "RFID · resultado sin credenciales",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1330,
+    "y": 1320,
+    "wires": []
+  },
+  {
+    "id": "rfid_debug_error",
+    "type": "debug",
+    "z": "16eae00c387784ac",
+    "name": "RFID · error",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1330,
+    "y": 1380,
+    "wires": []
+  },
+  {
+    "id": "rfid_note",
+    "type": "comment",
+    "z": "16eae00c387784ac",
+    "name": "LEER: HIK_IP, HIK_USER, HIK_PASSWORD, token (desactivado temporalmente) · test_mode=true",
+    "info": "Prueba temporal sin token del backend. Mantener las credenciales Digest del teclado. test_mode=true modifica usuarios y tarjetas, sin iniciar despachos. Deshabilitar las pestañas anteriores.",
+    "x": 600,
+    "y": 20,
+    "wires": []
+  }
+]

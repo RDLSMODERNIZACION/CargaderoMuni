@@ -24,6 +24,8 @@ type DispatchItem = {
   photo_paths?: string[] | null;
   company_id?: number | null;
   company_name?: string | null;
+  driver_name?: string | null;
+  access_method?: string | null;
   company_code?: string | null;
   ai_vehicle_analysis?: VehicleAI | null;
 };
@@ -214,7 +216,7 @@ export default function DispatchesPage() {
     {
       key: "company",
       header: "Empresa",
-      render: (r: DispatchItem) => r.company_name || r.company_code || "—",
+      render: (r: DispatchItem) => (<div>{r.company_name || r.company_code || "—"}{r.driver_name && <div className="text-xs text-slate-500">{r.driver_name} · RFID</div>}</div>),
     },
     {
       key: "plate",
