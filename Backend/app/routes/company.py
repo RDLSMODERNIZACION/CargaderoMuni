@@ -74,6 +74,28 @@ async def list_companies(active: bool = True):
                 {"id": r[0], "name": r[1], "code": r[2], "pin": r[3], "active": r[4]} for r in rows
             ]}
 
+@router.get("/id/{company_id}")
+async def get_company(company_id: int):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, name, code, pin, active FROM public.company WHERE id=%s",
+                (company_id,),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="company not found")
+
+    return {
+        "id": row[0],
+        "name": row[1],
+        "code": row[2],
+        "pin": row[3],
+        "active": row[4],
+    }
+
+
 @router.post("/{code}/deactivate")
 async def deactivate_company(code: str):
     async with pool.connection() as conn:
