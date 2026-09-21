@@ -181,8 +181,9 @@ async def maybe_start_dispatch(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
             await cur.execute(
                 """
-                INSERT INTO public.water_dispatch (station_id, company_id, photo_path, note)
-                VALUES (%s, %s, %s, 'despacho iniciado por PIN')
+                INSERT INTO public.water_dispatch
+                    (station_id, company_id, photo_path, note, access_method)
+                VALUES (%s, %s, %s, 'despacho iniciado por PIN', 'company_pin')
                 RETURNING id, ts
                 """,
                 (station_id, company_id, photo_path),
