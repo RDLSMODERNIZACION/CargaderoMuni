@@ -79,6 +79,7 @@ export default function UsersPage() {
   const [driverForm, setDriverForm] = useState<DriverForm>(emptyDriverForm);
   const [driverSaving, setDriverSaving] = useState(false);
   const [detailTab, setDetailTab] = useState<"company" | "drivers">("drivers");
+  const [actionMenuId, setActionMenuId] = useState<number | null>(null);
 
   useEffect(() => setMounted(true), []);
 
@@ -166,6 +167,70 @@ export default function UsersPage() {
         <Badge color={r.active ? "green" : "red"}>
           {r.active ? "Activa" : "Inactiva"}
         </Badge>
+      ),
+    },
+    {
+      key: "actions",
+      header: "",
+      width: "70px",
+      render: (r) => (
+        <div
+          className="relative flex justify-end"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="h-9 w-9 rounded-lg border border-slate-200 bg-white text-xl leading-none text-slate-600 hover:bg-slate-50"
+            aria-label={"Acciones de " + r.name}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActionMenuId((current) => (current === r.id ? null : r.id));
+            }}
+          >
+            ⋮
+          </button>
+
+          {actionMenuId === r.id && (
+            <div className="absolute right-0 top-10 z-30 min-w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+              <button
+                className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
+                onClick={() => {
+                  setActionMenuId(null);
+                  router.push(("/admin/users/" + r.id) as Route);
+                }}
+              >
+                Abrir empresa
+              </button>
+              <button
+                className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
+                onClick={() => {
+                  setActionMenuId(null);
+                  openEdit(r);
+                }}
+              >
+                Editar empresa
+              </button>
+              <button
+                className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
+                onClick={async () => {
+                  setActionMenuId(null);
+                  await setCompanyActive(r, !r.active);
+                }}
+              >
+                {r.active ? "Desactivar empresa" : "Activar empresa"}
+              </button>
+              <button
+                className="block w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                onClick={async () => {
+                  setActionMenuId(null);
+                  await deleteCompany(r);
+                }}
+              >
+                Eliminar empresa
+              </button>
+            </div>
+          )}
+        </div>
       ),
     },
   ];
