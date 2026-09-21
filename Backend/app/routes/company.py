@@ -18,6 +18,29 @@ class CompanyPatch(BaseModel):
     pin: Optional[str] = None
     active: Optional[bool] = None
 
+
+class DriverIn(BaseModel):
+    name: str
+    document_number: Optional[str] = None
+    phone: Optional[str] = None
+    rfid_uid: Optional[str] = None
+    enabled: bool = True
+
+
+class DriverPatch(BaseModel):
+    name: Optional[str] = None
+    document_number: Optional[str] = None
+    phone: Optional[str] = None
+    rfid_uid: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+def _normalize_rfid(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip().upper().replace(" ", "")
+    return normalized or None
+
 @router.post("")
 async def create_or_update_company(body: CompanyIn):
     async with pool.connection() as conn:
@@ -136,3 +159,190 @@ async def delete_company(company_id: int):
         raise HTTPException(status_code=404, detail="company not found")
 
     return {"ok": True, "id": company_id}
+
+
+
+@router.get("/id/{company_id}/drivers")
+async def list_company_drivers(company_id: int):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    u.id,
+                    u.name,
+                    u.document_number,
+                    u.phone,
+                    u.enabled,
+                    cred.id,
+                    cred.value,
+                    cred.active,
+                    cred.valid_from,
+                    cred.valid_until
+                FROM public.pin_user u
+                LEFT JOIN LATERAL (
+                    SELECT ac.id, ac.value, ac.active, ac.valid_from, ac.valid_until
+                    FROM public.access_credential ac
+                    WHERE ac.pin_user_id = u.id
+                      AND ac.kind IN ('rfid', 'card')
+                    ORDER BY ac.active DESC, ac.id DESC
+                    LIMIT 1
+                ) cred ON TRUE
+                WHERE u.company_id = %s
+                ORDER BY u.name, u.id
+                """,
+                (company_id,),
+            )
+            rows = await cur.fetchall()
+
+    return {
+        "ok": True,
+        "items": [
+            {
+                "id": r[0],
+                "name": r[1],
+                "document_number": r[2],
+                "phone": r[3],
+                "enabled": r[4],
+                "rfid_credential_id": r[5],
+                "rfid_uid": r[6],
+                "rfid_active": r[7] if r[5] is not None else None,
+                "rfid_valid_from": r[8],
+                "rfid_valid_until": r[9],
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/id/{company_id}/drivers")
+async def create_company_driver(company_id: int, body: DriverIn):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="El nombre del camionero es obligatorio")
+
+    rfid_uid = _normalize_rfid(body.rfid_uid)
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id FROM public.company WHERE id=%s",
+                (company_id,),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="company not found")
+
+            try:
+                await cur.execute(
+                    """
+                    INSERT INTO public.pin_user
+                        (name, company_id, document_number, phone, enabled, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, now())
+                    RETURNING id
+                    """,
+                    (
+                        name,
+                        company_id,
+                        body.document_number.strip() if body.document_number else None,
+                        body.phone.strip() if body.phone else None,
+                        body.enabled,
+                    ),
+                )
+                row = await cur.fetchone()
+                driver_id = int(row[0])
+
+                if rfid_uid:
+                    await cur.execute(
+                        """
+                        INSERT INTO public.access_credential
+                            (pin_user_id, kind, value, active, label, metadata, updated_at)
+                        VALUES (%s, 'rfid', %s, TRUE, %s, '{}'::jsonb, now())
+                        """,
+                        (driver_id, rfid_uid, f"RFID · {name}"),
+                    )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"No se pudo crear el camionero: {e}")
+
+    return {"ok": True, "id": driver_id}
+
+
+@router.patch("/id/{company_id}/drivers/{driver_id}")
+async def update_company_driver(company_id: int, driver_id: int, body: DriverPatch):
+    payload = body.model_dump(exclude_unset=True)
+    fields = []
+    params = []
+
+    if "name" in payload:
+        name = (payload["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="El nombre del camionero es obligatorio")
+        fields.append("name = %s")
+        params.append(name)
+    if "document_number" in payload:
+        fields.append("document_number = %s")
+        params.append((payload["document_number"] or "").strip() or None)
+    if "phone" in payload:
+        fields.append("phone = %s")
+        params.append((payload["phone"] or "").strip() or None)
+    if "enabled" in payload:
+        fields.append("enabled = %s")
+        params.append(payload["enabled"])
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, name FROM public.pin_user WHERE id=%s AND company_id=%s",
+                (driver_id, company_id),
+            )
+            current = await cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="camionero not found")
+
+            if fields:
+                fields.append("updated_at = now()")
+                params.extend([driver_id, company_id])
+                await cur.execute(
+                    f"UPDATE public.pin_user SET {', '.join(fields)} WHERE id=%s AND company_id=%s",
+                    tuple(params),
+                )
+
+            if "rfid_uid" in payload:
+                rfid_uid = _normalize_rfid(payload["rfid_uid"])
+                await cur.execute(
+                    """
+                    UPDATE public.access_credential
+                    SET active=FALSE, updated_at=now()
+                    WHERE pin_user_id=%s AND kind IN ('rfid','card') AND active=TRUE
+                    """,
+                    (driver_id,),
+                )
+                if rfid_uid:
+                    try:
+                        await cur.execute(
+                            """
+                            INSERT INTO public.access_credential
+                                (pin_user_id, kind, value, active, label, metadata, updated_at)
+                            VALUES (%s, 'rfid', %s, TRUE, %s, '{}'::jsonb, now())
+                            """,
+                            (driver_id, rfid_uid, f"RFID · {payload.get('name') or current[1]}"),
+                        )
+                    except Exception as e:
+                        raise HTTPException(status_code=400, detail=f"No se pudo asignar la RFID: {e}")
+
+    return {"ok": True, "id": driver_id}
+
+
+@router.delete("/id/{company_id}/drivers/{driver_id}")
+async def delete_company_driver(company_id: int, driver_id: int):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "DELETE FROM public.pin_user WHERE id=%s AND company_id=%s RETURNING id",
+                (driver_id, company_id),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="camionero not found")
+
+    return {"ok": True, "id": driver_id}
