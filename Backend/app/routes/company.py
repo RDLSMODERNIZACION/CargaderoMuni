@@ -196,6 +196,7 @@ async def list_company_drivers(company_id: int):
                     u.document_number,
                     u.phone,
                     u.enabled,
+                    u.device_employee_no,
                     cred.id,
                     cred.value,
                     cred.active,
@@ -226,11 +227,12 @@ async def list_company_drivers(company_id: int):
                 "document_number": r[2],
                 "phone": r[3],
                 "enabled": r[4],
-                "rfid_credential_id": r[5],
-                "rfid_uid": r[6],
-                "rfid_active": r[7] if r[5] is not None else None,
-                "rfid_valid_from": r[8],
-                "rfid_valid_until": r[9],
+                "device_employee_no": r[5],
+                "rfid_credential_id": r[6],
+                "rfid_uid": r[7],
+                "rfid_active": r[8] if r[6] is not None else None,
+                "rfid_valid_from": r[9],
+                "rfid_valid_until": r[10],
             }
             for r in rows
         ],
@@ -273,6 +275,16 @@ async def create_company_driver(company_id: int, body: DriverIn):
                 row = await cur.fetchone()
                 driver_id = int(row[0])
 
+                await cur.execute(
+                    """
+                    UPDATE public.pin_user
+                    SET device_employee_no = %s,
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (f"DRIVER-{driver_id}", driver_id),
+                )
+
                 if rfid_uid:
                     await cur.execute(
                         """
@@ -285,7 +297,7 @@ async def create_company_driver(company_id: int, body: DriverIn):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"No se pudo crear el camionero: {e}")
 
-    return {"ok": True, "id": driver_id}
+    return {"ok": True, "id": driver_id, "device_employee_no": f"DRIVER-{driver_id}"}
 
 
 @router.patch("/id/{company_id}/drivers/{driver_id}")
