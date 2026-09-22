@@ -1,3 +1,5 @@
+import { clearSession, getValidAccessToken } from "../auth";
+
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_BASE ||
   "https://cargaderomuni.onrender.com"
@@ -11,14 +13,21 @@ export async function apiJSON<T>(
     ? path
     : `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
 
+  const token = await getValidAccessToken();
+
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: "Bearer " + token } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
   });
+
+  if (res.status === 401 && typeof window !== "undefined") {
+    clearSession();
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -30,5 +39,4 @@ export async function apiJSON<T>(
   return res.json() as Promise<T>;
 }
 
-// ✅ también export default por compatibilidad
 export default apiJSON;
