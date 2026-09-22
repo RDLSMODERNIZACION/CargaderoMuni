@@ -5,6 +5,7 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { apiJSON } from "../../../lib/api/api";
 import { fmtLiters } from "../../../lib/utils";
+import { useAuth } from "../../../components/AuthContext";
 
 type Summary = {
   ok: boolean;
@@ -40,6 +41,20 @@ type DayDispatch = {
   liters: number;
   plate?: string | null;
   note?: string | null;
+};
+
+type Organization = {
+  id: number;
+  name: string;
+  active: boolean;
+  station_count: number;
+};
+
+type Station = {
+  id: string;
+  name?: string | null;
+  active: boolean;
+  organization_id?: number | null;
 };
 
 type ChartMode = "dispatches" | "volume";
@@ -167,6 +182,7 @@ function MonthlyBars({
 
 export default function ReportsPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [month, setMonth] = useState(currentMonth());
   const [mode, setMode] = useState<ChartMode>("dispatches");
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -177,8 +193,32 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [loadingDay, setLoadingDay] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [stationId, setStationId] = useState("");
 
   const range = useMemo(() => monthToRange(month), [month]);
+
+  const visibleStations = useMemo(() => {
+    if (!organizationId) return stations;
+    return stations.filter(
+      (station) => String(station.organization_id || "") === organizationId
+    );
+  }, [stations, organizationId]);
+
+  async function loadScope() {
+    try {
+      const [stationData, orgData] = await Promise.all([
+        apiJSON<Station[]>("/stations"),
+        apiJSON<{ ok: boolean; items: Organization[] }>("/organizations"),
+      ]);
+      setStations(Array.isArray(stationData) ? stationData : []);
+      setOrganizations(Array.isArray(orgData?.items) ? orgData.items : []);
+    } catch (e: any) {
+      setErr(e?.message ?? "No se pudo cargar el alcance del KPI");
+    }
+  }
 
   const daily = useMemo(() => {
     const count = daysInMonth(month);
@@ -201,6 +241,8 @@ export default function ReportsPage() {
       const qs = new URLSearchParams();
       qs.set("from", range.from);
       qs.set("to", range.to);
+      if (organizationId) qs.set("organization_id", organizationId);
+      if (stationId) qs.set("station_id", stationId);
       const q = qs.toString();
 
       const [s, c, d] = await Promise.all([
@@ -229,7 +271,13 @@ export default function ReportsPage() {
 
     try {
       const res = await apiJSON<{ ok: boolean; date: string; items: DayDispatch[] }>(
-        `/kpi/day_dispatches?date=${encodeURIComponent(day)}`
+        (() => {
+          const qs = new URLSearchParams();
+          qs.set("date", day);
+          if (organizationId) qs.set("organization_id", organizationId);
+          if (stationId) qs.set("station_id", stationId);
+          return "/kpi/day_dispatches?" + qs.toString();
+        })()
       );
       setDayDispatches(res.items || []);
     } catch (e: any) {
@@ -241,8 +289,21 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
+    loadScope();
+  }, []);
+
+  useEffect(() => {
+    if (
+      stationId &&
+      !visibleStations.some((station) => station.id === stationId)
+    ) {
+      setStationId("");
+    }
+  }, [organizationId, stations]);
+
+  useEffect(() => {
     loadMonth();
-  }, [month]);
+  }, [month, organizationId, stationId]);
 
   const total = summary?.total_liters ?? 0;
   const dispatches = summary?.dispatch_count ?? 0;
@@ -277,6 +338,50 @@ export default function ReportsPage() {
       {err && (
         <div className="p-3 rounded border border-red-300 bg-red-50 text-red-700 text-sm">{err}</div>
       )}
+
+      <section className="card">
+        <div className="grid gap-3 md:grid-cols-2">
+          {user?.role === "owner" && organizations.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-500">Organización</label>
+              <select
+                className="select"
+                value={organizationId}
+                onChange={(e) => {
+                  setOrganizationId(e.target.value);
+                  setStationId("");
+                }}
+              >
+                <option value="">Todas las organizaciones</option>
+                {organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Cargadero</label>
+            <select
+              className="select"
+              value={stationId}
+              onChange={(e) => setStationId(e.target.value)}
+            >
+              <option value="">Todos los cargaderos permitidos</option>
+              {visibleStations.map((station) => (
+                <option key={station.id} value={station.id}>
+                  {station.name || station.id}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-slate-500">
+          El KPI está limitado automáticamente a las organizaciones y estaciones habilitadas para tu usuario.
+        </div>
+      </section>
 
       <section className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="Despachos del mes" value={loading ? "…" : dispatches} />
