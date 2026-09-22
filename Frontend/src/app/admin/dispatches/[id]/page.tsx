@@ -24,6 +24,7 @@ type VehicleAI = {
 
 type Station = { id: string; name?: string | null; active: boolean };
 type Company = { id: number; name: string; code?: string | null; active: boolean };
+type StationCompany = Company & { allowed: boolean };
 
 type EditForm = {
   station_id: string;
@@ -103,6 +104,7 @@ export default function DispatchDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [stations, setStations] = useState<Station[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [editCompanies, setEditCompanies] = useState<StationCompany[]>([]);
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<EditForm>({
@@ -149,6 +151,27 @@ export default function DispatchDetailPage() {
     }
   }
 
+  async function loadEditCompanies(stationId: string) {
+    if (!stationId) {
+      setEditCompanies([]);
+      return;
+    }
+
+    try {
+      const data = await apiJSON<{ ok: boolean; items: StationCompany[] }>(
+        "/stations/" + encodeURIComponent(stationId) + "/companies"
+      );
+      setEditCompanies(
+        (Array.isArray(data?.items) ? data.items : []).filter(
+          (company) => company.active && company.allowed
+        )
+      );
+    } catch (e: any) {
+      setEditCompanies([]);
+      setError(e?.message ?? "No se pudieron cargar las empresas habilitadas");
+    }
+  }
+
   function openEdit() {
     if (!item) return;
     setEditForm({
@@ -160,6 +183,7 @@ export default function DispatchDetailPage() {
       note: item.note || "",
     });
     setEditOpen(true);
+    loadEditCompanies(item.station_id);
   }
 
   async function saveEdit() {
@@ -232,6 +256,11 @@ export default function DispatchDetailPage() {
     load();
     loadMeta();
   }, [dispatchId]);
+
+  useEffect(() => {
+    if (!editOpen || !editForm.station_id) return;
+    loadEditCompanies(editForm.station_id);
+  }, [editOpen, editForm.station_id]);
 
   if (loading) {
     return <div className="text-sm text-slate-500">Cargando despacho…</div>;
@@ -576,8 +605,10 @@ export default function DispatchDetailPage() {
                   onChange={(e) => setEditForm((p) => ({ ...p, company_id: e.target.value }))}
                 >
                   <option value="">Seleccionar</option>
-                  {companies.map((co) => (
-                    <option key={co.id} value={String(co.id)}>{co.name || co.code || co.id}</option>
+                  {editCompanies.map((co) => (
+                    <option key={co.id} value={String(co.id)}>
+                      {co.name || co.code || co.id}
+                    </option>
                   ))}
                 </select>
               </div>

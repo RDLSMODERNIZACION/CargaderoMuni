@@ -43,6 +43,10 @@ class StationActivePatch(BaseModel):
     active: bool
 
 
+class StationCompanyPatch(BaseModel):
+    active: bool
+
+
 class StationPatch(BaseModel):
     name: Optional[str] = None
     active: Optional[bool] = None
@@ -272,3 +276,88 @@ async def delete_station(
         raise HTTPException(status_code=404, detail=f"Station '{station_id}' no encontrada")
 
     return {"ok": True, "id": station_id}
+
+
+
+# --------- Empresas habilitadas por estación ---------
+@router.get("/{station_id}/companies")
+async def list_station_companies(
+    station_id: str = Path(..., min_length=1),
+    user: CurrentUser = Depends(get_current_user),
+):
+    await require_station_access(user, station_id)
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    c.id,
+                    c.name,
+                    c.code,
+                    c.pin,
+                    c.active,
+                    COALESCE(sca.active, FALSE) AS allowed
+                FROM public.company c
+                LEFT JOIN public.station_company_access sca
+                  ON sca.company_id = c.id
+                 AND sca.station_id = %s
+                ORDER BY c.name, c.id
+                """,
+                (station_id,),
+            )
+            rows = await cur.fetchall()
+
+    return {
+        "ok": True,
+        "station_id": station_id,
+        "items": [
+            {
+                "id": int(r[0]),
+                "name": r[1],
+                "code": r[2],
+                "pin": r[3],
+                "active": bool(r[4]),
+                "allowed": bool(r[5]),
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.put("/{station_id}/companies/{company_id}")
+async def set_station_company_access(
+    company_id: int,
+    body: StationCompanyPatch,
+    station_id: str = Path(..., min_length=1),
+    user: CurrentUser = Depends(get_current_user),
+):
+    await require_station_access(user, station_id, {"owner", "admin"})
+
+    async with get_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT 1 FROM public.company WHERE id=%s",
+                (company_id,),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Empresa no encontrada")
+
+            await cur.execute(
+                """
+                INSERT INTO public.station_company_access
+                    (station_id, company_id, active, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (station_id, company_id) DO UPDATE SET
+                    active = EXCLUDED.active,
+                    updated_at = now()
+                """,
+                (station_id, company_id, body.active),
+            )
+
+    return {
+        "ok": True,
+        "station_id": station_id,
+        "company_id": company_id,
+        "active": body.active,
+    }

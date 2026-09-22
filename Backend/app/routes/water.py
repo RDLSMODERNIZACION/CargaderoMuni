@@ -141,10 +141,25 @@ async def resolve_access(cur, request, station_id, company_code, employee_no, ca
     if method not in ("", "manual", "company_pin"):
         raise HTTPException(422, "Unsupported access_method")
     if company_code:
-        await cur.execute("SELECT id FROM public.company WHERE code=%s AND active", (company_code,))
+        await cur.execute(
+            """
+            SELECT c.id
+            FROM public.company c
+            JOIN public.station_company_access sca
+              ON sca.company_id = c.id
+             AND sca.station_id = %s
+             AND sca.active
+            WHERE c.code = %s
+              AND c.active
+            """,
+            (station_id, company_code),
+        )
         row = await cur.fetchone()
         if not row:
-            raise HTTPException(404, "company not found or inactive")
+            raise HTTPException(
+                403,
+                "Empresa no habilitada para esta estación",
+            )
         return None, int(row[0]), company_code, "company_pin"
     if method == "company_pin":
         raise HTTPException(422, "company_code is required")
@@ -590,6 +605,22 @@ async def create_dispatch_admin(
 
             await cur.execute(
                 """
+                SELECT 1
+                FROM public.station_company_access
+                WHERE station_id=%s
+                  AND company_id=%s
+                  AND active
+                """,
+                (body.station_id, body.company_id),
+            )
+            if not await cur.fetchone():
+                raise HTTPException(
+                    status_code=403,
+                    detail="La empresa no está habilitada para esta estación",
+                )
+
+            await cur.execute(
+                """
                 INSERT INTO public.water_dispatch
                     (station_id, company_id, liters, flow_l_min, note, ts)
                 VALUES
@@ -689,6 +720,35 @@ async def update_dispatch_admin(
                 )
                 if not await cur.fetchone():
                     raise HTTPException(status_code=404, detail="company not found")
+
+            final_station_id = payload.get("station_id", current_station_id)
+
+            if "company_id" in payload:
+                final_company_id = payload["company_id"]
+            else:
+                await cur.execute(
+                    "SELECT company_id FROM public.water_dispatch WHERE id=%s",
+                    (dispatch_id,),
+                )
+                current_company = await cur.fetchone()
+                final_company_id = current_company[0] if current_company else None
+
+            if final_company_id is not None:
+                await cur.execute(
+                    """
+                    SELECT 1
+                    FROM public.station_company_access
+                    WHERE station_id=%s
+                      AND company_id=%s
+                      AND active
+                    """,
+                    (final_station_id, final_company_id),
+                )
+                if not await cur.fetchone():
+                    raise HTTPException(
+                        status_code=403,
+                        detail="La empresa no está habilitada para esta estación",
+                    )
 
             params.append(dispatch_id)
             await cur.execute(

@@ -33,6 +33,7 @@ type DispatchItem = {
 
 type Station = { id: string; name?: string | null; active: boolean };
 type Company = { id: number; name: string; code?: string | null; active: boolean };
+type StationCompany = Company & { allowed: boolean };
 
 type CreateForm = {
   station_id: string;
@@ -75,6 +76,7 @@ export default function DispatchesPage() {
 
   const [stations, setStations] = useState<Station[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [createCompanies, setCreateCompanies] = useState<StationCompany[]>([]);
   const [rows, setRows] = useState<DispatchItem[]>([]);
   const [qStation, setQStation] = useState("");
   const [qCompany, setQCompany] = useState("");
@@ -125,6 +127,27 @@ export default function DispatchesPage() {
       setError(e?.message ?? "Error cargando datos");
     } finally {
       setLoadingMeta(false);
+    }
+  }
+
+  async function loadCreateCompanies(stationId: string) {
+    if (!stationId) {
+      setCreateCompanies([]);
+      return;
+    }
+
+    try {
+      const data = await apiJSON<{ ok: boolean; items: StationCompany[] }>(
+        "/stations/" + encodeURIComponent(stationId) + "/companies"
+      );
+      setCreateCompanies(
+        (Array.isArray(data?.items) ? data.items : []).filter(
+          (company) => company.active && company.allowed
+        )
+      );
+    } catch (e: any) {
+      setCreateCompanies([]);
+      setError(e?.message ?? "No se pudieron cargar las empresas habilitadas");
     }
   }
 
@@ -194,6 +217,19 @@ export default function DispatchesPage() {
     if (!mounted) return;
     loadDispatches();
   }, [mounted, qStation]);
+
+  useEffect(() => {
+    if (!form.station_id) {
+      setCreateCompanies([]);
+      if (form.company_id) {
+        setForm((p) => ({ ...p, company_id: "" }));
+      }
+      return;
+    }
+
+    loadCreateCompanies(form.station_id);
+    setForm((p) => ({ ...p, company_id: "" }));
+  }, [form.station_id]);
 
   const filtered = useMemo(() => {
     const start = from ? new Date(from).getTime() : -Infinity;
@@ -385,8 +421,10 @@ export default function DispatchesPage() {
                   onChange={(e) => setForm((p) => ({ ...p, company_id: e.target.value }))}
                 >
                   <option value="">Seleccionar</option>
-                  {companyOptions.map((c) => (
-                    <option key={c.id} value={String(c.id)}>{c.label}</option>
+                  {createCompanies.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {c.name || c.code || String(c.id)}
+                    </option>
                   ))}
                 </select>
               </div>
