@@ -115,7 +115,7 @@ export default function AccessPage() {
                   <select
                     className="select max-w-[190px]"
                     value={item.role}
-                    disabled={savingId === item.user_id}
+                    disabled={savingId === item.user_id || item.user_id === user?.id}
                     onChange={(e) =>
                       updateAccess(item, {
                         role: e.target.value as AccessUser["role"],
