@@ -9,6 +9,8 @@ export type AppUser = {
   email?: string | null;
   role: AppRole;
   active: boolean;
+  organization_roles?: Record<string, AppRole>;
+  station_roles?: Record<string, "admin" | "operator" | "viewer">;
 };
 
 type AuthContextValue = {
