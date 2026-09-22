@@ -6,6 +6,7 @@ import type { Route } from "next";
 import DataTable, { type Column } from "../../../components/DataTable";
 import Badge from "../../../components/Badge";
 import { apiJSON } from "../../../lib/api/api";
+import { useAuth } from "../../../components/AuthContext";
 
 export type Station = {
   id: string;
@@ -33,6 +34,7 @@ const emptyForm: StationForm = {
 };
 
 export default function StationsPage() {
+  const { canAdmin } = useAuth();
   const router = useRouter();
   const [rows, setRows] = useState<Station[]>([]);
   const [loading, setLoading] = useState(true);
@@ -180,9 +182,11 @@ export default function StationsPage() {
           <button className="btn btn-secondary" onClick={load} disabled={loading}>
             Recargar
           </button>
-          <button className="btn" onClick={openCreate}>
-            + Nueva estación
-          </button>
+          {canAdmin && (
+            <button className="btn" onClick={openCreate}>
+              + Nueva estación
+            </button>
+          )}
         </div>
       </header>
 
