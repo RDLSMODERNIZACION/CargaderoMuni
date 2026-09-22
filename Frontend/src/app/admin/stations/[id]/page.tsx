@@ -6,6 +6,7 @@ import type { Route } from "next";
 import Tabs from "../../../../components/Tabs";
 import Badge from "../../../../components/Badge";
 import { apiJSON } from "../../../../lib/api/api";
+import { useAuth } from "../../../../components/AuthContext";
 
 type Station = {
   id: string;
@@ -67,6 +68,7 @@ function ago(seconds?: number | null) {
 }
 
 export default function StationDetailPage() {
+  const { canAdmin } = useAuth();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const stationId = decodeURIComponent(params.id || "");
@@ -422,6 +424,7 @@ export default function StationDetailPage() {
         label: "Acciones",
         content: (
           <section className="card">
+            {canAdmin ? (
             <div className="flex flex-wrap gap-2">
               <button className="btn btn-secondary" onClick={() => setEditOpen(true)}>
                 Editar
@@ -437,6 +440,9 @@ export default function StationDetailPage() {
                 Eliminar
               </button>
             </div>
+            ) : (
+              <div className="text-sm text-slate-500">Tu usuario tiene acceso de solo lectura para esta configuración.</div>
+            )}
           </section>
         ),
       },

@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.routes.auth import router as auth_router
 from app.routes.company import router as company_router
 from app.routes.company_sync import router as company_sync_router
 from app.routes.fotos.media import router as fotos_media_router
@@ -13,6 +14,10 @@ from app.routes.vehicle_ai import router as vehicle_ai_router
 
 
 api_router = APIRouter()
+
+
+# Login / permisos
+api_router.include_router(auth_router)
 
 
 # Control de acceso Hikvision

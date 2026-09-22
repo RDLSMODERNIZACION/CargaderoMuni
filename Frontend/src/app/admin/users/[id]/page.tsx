@@ -6,6 +6,7 @@ import type { Route } from "next";
 import Tabs from "../../../../components/Tabs";
 import Badge from "../../../../components/Badge";
 import { apiJSON } from "../../../../lib/api/api";
+import { useAuth } from "../../../../components/AuthContext";
 
 type Company = {
   id: number;
@@ -46,6 +47,7 @@ const emptyDriverForm: DriverForm = {
 };
 
 export default function CompanyDetailPage() {
+  const { canAdmin } = useAuth();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const companyId = Number(params.id || 0);
@@ -236,9 +238,11 @@ export default function CompanyDetailPage() {
                   Cada camionero queda asociado a esta empresa y a su RFID.
                 </p>
               </div>
-              <button className="btn" onClick={openCreateDriver}>
-                + Agregar camionero
-              </button>
+              {canAdmin && (
+                <button className="btn" onClick={openCreateDriver}>
+                  + Agregar camionero
+                </button>
+              )}
             </div>
 
             {driversLoading ? (
@@ -295,21 +299,25 @@ export default function CompanyDetailPage() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex justify-end gap-2">
-                            <button className="btn btn-secondary" onClick={() => openEditDriver(driver)}>
-                              Editar
-                            </button>
-                            <button className="btn btn-secondary" onClick={() => toggleDriver(driver)}>
-                              {driver.enabled ? "Desactivar" : "Activar"}
-                            </button>
-                            <button
-                              className="btn btn-secondary"
-                              onClick={() => deleteDriver(driver)}
-                              style={{ color: "#b91c1c" }}
-                            >
-                              Eliminar
-                            </button>
-                          </div>
+                          {canAdmin ? (
+                            <div className="flex justify-end gap-2">
+                              <button className="btn btn-secondary" onClick={() => openEditDriver(driver)}>
+                                Editar
+                              </button>
+                              <button className="btn btn-secondary" onClick={() => toggleDriver(driver)}>
+                                {driver.enabled ? "Desactivar" : "Activar"}
+                              </button>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => deleteDriver(driver)}
+                                style={{ color: "#b91c1c" }}
+                              >
+                                Eliminar
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-400">Solo lectura</span>
+                          )}
                         </td>
                       </tr>
                     ))}

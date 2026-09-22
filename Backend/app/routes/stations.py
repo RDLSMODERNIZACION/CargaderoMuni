@@ -9,9 +9,10 @@
 # Requiere:
 #   - Tabla public.station (id TEXT PK, name TEXT, active BOOL, created_at TIMESTAMPTZ)
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from app.auth import CurrentUser, require_admin
 from app.db import get_conn
 
 router = APIRouter(prefix="/stations", tags=["stations"])
@@ -87,7 +88,7 @@ async def get_station(station_id: str = Path(..., min_length=1)):
 
 
 @router.post("", response_model=StationOut, status_code=201)
-async def upsert_station(s: StationIn):
+async def upsert_station(s: StationIn, _user: CurrentUser = Depends(require_admin)):
     """
     Crea o actualiza una estación (upsert por id).
     """
@@ -122,6 +123,7 @@ async def upsert_station(s: StationIn):
 async def set_station_active(
     patch: StationActivePatch,
     station_id: str = Path(..., min_length=1),
+    _user: CurrentUser = Depends(require_admin),
 ):
     async with get_conn() as conn:
         async with conn.cursor() as cur:
@@ -145,6 +147,7 @@ async def set_station_active(
 async def update_station(
     patch: StationPatch,
     station_id: str = Path(..., min_length=1),
+    _user: CurrentUser = Depends(require_admin),
 ):
     fields = []
     params = []
@@ -190,7 +193,7 @@ async def update_station(
 
 
 @router.delete("/{station_id}")
-async def delete_station(station_id: str = Path(..., min_length=1)):
+async def delete_station(station_id: str = Path(..., min_length=1), _user: CurrentUser = Depends(require_admin)):
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(

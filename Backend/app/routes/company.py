@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from app.auth import CurrentUser, require_admin
 from app.db import pool
 
 router = APIRouter()
@@ -44,7 +45,7 @@ def _normalize_rfid(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 @router.post("")
-async def create_or_update_company(body: CompanyIn):
+async def create_or_update_company(body: CompanyIn, _user: CurrentUser = Depends(require_admin)):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -99,7 +100,7 @@ async def get_company(company_id: int):
 
 
 @router.post("/{code}/deactivate")
-async def deactivate_company(code: str):
+async def deactivate_company(code: str, _user: CurrentUser = Depends(require_admin)):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("UPDATE public.company SET active=FALSE WHERE code=%s RETURNING id", (code,))
@@ -110,7 +111,7 @@ async def deactivate_company(code: str):
 
 
 @router.patch("/id/{company_id}")
-async def update_company(company_id: int, body: CompanyPatch):
+async def update_company(company_id: int, body: CompanyPatch, _user: CurrentUser = Depends(require_admin)):
     fields = []
     params = []
     payload = body.model_dump(exclude_unset=True)
@@ -166,7 +167,7 @@ async def update_company(company_id: int, body: CompanyPatch):
 
 
 @router.delete("/id/{company_id}")
-async def delete_company(company_id: int):
+async def delete_company(company_id: int, _user: CurrentUser = Depends(require_admin)):
     """
     Elimina la empresa. Los despachos históricos conservan su registro y
     company_id pasa a NULL por la FK ON DELETE SET NULL.
@@ -244,7 +245,7 @@ async def list_company_drivers(company_id: int):
 
 
 @router.post("/id/{company_id}/drivers")
-async def create_company_driver(company_id: int, body: DriverIn):
+async def create_company_driver(company_id: int, body: DriverIn, _user: CurrentUser = Depends(require_admin)):
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="El nombre del camionero es obligatorio")
@@ -306,7 +307,7 @@ async def create_company_driver(company_id: int, body: DriverIn):
 
 
 @router.patch("/id/{company_id}/drivers/{driver_id}")
-async def update_company_driver(company_id: int, driver_id: int, body: DriverPatch):
+async def update_company_driver(company_id: int, driver_id: int, body: DriverPatch, _user: CurrentUser = Depends(require_admin)):
     payload = body.model_dump(exclude_unset=True)
     fields = []
     params = []
@@ -375,7 +376,7 @@ async def update_company_driver(company_id: int, driver_id: int, body: DriverPat
 
 
 @router.delete("/id/{company_id}/drivers/{driver_id}")
-async def delete_company_driver(company_id: int, driver_id: int):
+async def delete_company_driver(company_id: int, driver_id: int, _user: CurrentUser = Depends(require_admin)):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
