@@ -70,9 +70,6 @@ def _row_to_out(row) -> StationOut:
 async def list_stations(user: CurrentUser = Depends(get_current_user)):
     allowed = await accessible_station_ids(user)
 
-    if user.role != "owner":
-        raise HTTPException(status_code=403, detail="Solo el owner global puede crear estaciones")
-
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             if allowed is None:
@@ -120,8 +117,11 @@ async def get_station(
 @router.post("", response_model=StationOut, status_code=201)
 async def upsert_station(s: StationIn, user: CurrentUser = Depends(get_current_user)):
     """
-    Crea o actualiza una estación (upsert por id).
+    Crea una estación nueva. Solo el owner global puede hacerlo.
     """
+    if user.role != "owner":
+        raise HTTPException(status_code=403, detail="Solo el owner global puede crear estaciones")
+
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             try:
