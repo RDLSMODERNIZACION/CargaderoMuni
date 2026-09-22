@@ -203,33 +203,37 @@ export default function UsersPage() {
               >
                 Abrir empresa
               </button>
-              <button
-                className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
-                onClick={() => {
-                  setActionMenuId(null);
-                  openEdit(r);
-                }}
-              >
-                Editar empresa
-              </button>
-              <button
-                className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
-                onClick={async () => {
-                  setActionMenuId(null);
-                  await setCompanyActive(r, !r.active);
-                }}
-              >
-                {r.active ? "Desactivar empresa" : "Activar empresa"}
-              </button>
-              <button
-                className="block w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-red-50"
-                onClick={async () => {
-                  setActionMenuId(null);
-                  await deleteCompany(r);
-                }}
-              >
-                Eliminar empresa
-              </button>
+              {canAdmin && (
+                <>
+                  <button
+                    className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setActionMenuId(null);
+                      openEdit(r);
+                    }}
+                  >
+                    Editar empresa
+                  </button>
+                  <button
+                    className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={async () => {
+                      setActionMenuId(null);
+                      await setCompanyActive(r, !r.active);
+                    }}
+                  >
+                    {r.active ? "Desactivar empresa" : "Activar empresa"}
+                  </button>
+                  <button
+                    className="block w-full px-4 py-2 text-left text-sm text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      setActionMenuId(null);
+                      await deleteCompany(r);
+                    }}
+                  >
+                    Eliminar empresa
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
