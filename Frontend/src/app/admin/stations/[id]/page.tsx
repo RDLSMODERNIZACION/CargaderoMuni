@@ -22,6 +22,15 @@ type Organization = {
   station_count: number;
 };
 
+type StationCompany = {
+  id: number;
+  name: string;
+  code?: string | null;
+  pin?: string | null;
+  active: boolean;
+  allowed: boolean;
+};
+
 type HealthItem = {
   device_id: string;
   device_type: string;
@@ -85,6 +94,9 @@ export default function StationDetailPage() {
   const [healthItems, setHealthItems] = useState<HealthItem[]>([]);
   const [weekly, setWeekly] = useState<WeeklyDay[]>([]);
   const [events, setEvents] = useState<HealthEvent[]>([]);
+  const [stationCompanies, setStationCompanies] = useState<StationCompany[]>([]);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
+  const [companySavingId, setCompanySavingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [healthLoading, setHealthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +140,18 @@ export default function StationDetailPage() {
     }
   }
 
+  async function loadStationCompanies() {
+    setCompaniesLoading(true);
+    try {
+      const data = await apiJSON<{ ok: boolean; items: StationCompany[] }>(
+        "/stations/" + encodeURIComponent(stationId) + "/companies"
+      );
+      setStationCompanies(Array.isArray(data?.items) ? data.items : []);
+    } finally {
+      setCompaniesLoading(false);
+    }
+  }
+
   async function loadOrganizations() {
     if (user?.role !== "owner") return;
     const data = await apiJSON<{ ok: boolean; items: Organization[] }>("/organizations");
@@ -138,7 +162,12 @@ export default function StationDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([loadStation(), loadHealth(), loadOrganizations()]);
+      await Promise.all([
+        loadStation(),
+        loadHealth(),
+        loadOrganizations(),
+        loadStationCompanies(),
+      ]);
     } catch (e: any) {
       setError(e?.message ?? "No se pudo cargar la estación");
     } finally {
@@ -188,6 +217,28 @@ export default function StationDetailPage() {
       await loadStation();
     } catch (e: any) {
       setError(e?.message ?? "No se pudo actualizar la estación");
+    }
+  }
+
+  async function setCompanyAllowed(company: StationCompany, allowed: boolean) {
+    setCompanySavingId(company.id);
+    setError(null);
+    try {
+      await apiJSON(
+        "/stations/" +
+          encodeURIComponent(stationId) +
+          "/companies/" +
+          company.id,
+        {
+          method: "PUT",
+          body: JSON.stringify({ active: allowed }),
+        }
+      );
+      await loadStationCompanies();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo actualizar la empresa habilitada");
+    } finally {
+      setCompanySavingId(null);
     }
   }
 
@@ -451,6 +502,94 @@ export default function StationDetailPage() {
         ),
       },
       {
+        key: "empresas",
+        label: "Empresas habilitadas",
+        badge: (
+          <span className="badge bg-slate-100 text-slate-700">
+            {stationCompanies.filter((company) => company.allowed).length}
+          </span>
+        ),
+        content: (
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">Empresas habilitadas</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Definí qué empresas pueden cargar agua en esta estación.
+              </p>
+            </div>
+
+            {companiesLoading ? (
+              <div className="text-sm text-slate-500">Cargando empresas…</div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-sm min-w-[680px]">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="text-left font-medium px-4 py-3">Empresa</th>
+                      <th className="text-left font-medium px-4 py-3">Código</th>
+                      <th className="text-left font-medium px-4 py-3">Estado empresa</th>
+                      <th className="text-left font-medium px-4 py-3">Habilitada en estación</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {stationCompanies.map((company) => (
+                      <tr key={company.id}>
+                        <td className="px-4 py-3 font-medium">{company.name}</td>
+                        <td className="px-4 py-3">
+                          <code className="rounded bg-slate-100 px-2 py-1 text-xs">
+                            {company.code || "—"}
+                          </code>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge color={company.active ? "green" : "red"}>
+                            {company.active ? "Activa" : "Inactiva"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          {canAdminThisStation ? (
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={company.allowed}
+                                disabled={
+                                  companySavingId === company.id || !company.active
+                                }
+                                onChange={(e) =>
+                                  setCompanyAllowed(company, e.target.checked)
+                                }
+                              />
+                              <span className={company.allowed ? "text-emerald-700 font-medium" : "text-slate-500"}>
+                                {company.allowed ? "Habilitada" : "No habilitada"}
+                              </span>
+                            </label>
+                          ) : (
+                            <Badge color={company.allowed ? "green" : "slate"}>
+                              {company.allowed ? "Habilitada" : "No habilitada"}
+                            </Badge>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+
+                    {!stationCompanies.length && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-5 text-center text-slate-500">
+                          No hay empresas registradas.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="text-xs text-slate-500">
+              Si una empresa no está habilitada, el backend rechaza PIN, RFID y despachos manuales para esta estación.
+            </div>
+          </div>
+        ),
+      },
+      {
         key: "acciones",
         label: "Acciones",
         content: (
@@ -478,7 +617,20 @@ export default function StationDetailPage() {
         ),
       },
     ],
-    [station, healthItems, weekly, events, healthLoading, maxOffline, totalIncidents, totalOffline, canAdminThisStation]
+    [
+      station,
+      healthItems,
+      weekly,
+      events,
+      healthLoading,
+      maxOffline,
+      totalIncidents,
+      totalOffline,
+      canAdminThisStation,
+      stationCompanies,
+      companiesLoading,
+      companySavingId,
+    ]
   );
 
   if (loading) {
