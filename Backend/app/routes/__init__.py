@@ -6,6 +6,7 @@ from app.routes.company_sync import router as company_sync_router
 from app.routes.fotos.media import router as fotos_media_router
 from app.routes.hik import router as hik_router
 from app.routes.kpi import router as kpi_router
+from app.routes.organizations import router as organizations_router
 from app.routes.stations import router as stations_router
 from app.routes.system_health import router as system_health_router
 from app.routes.wallet import router as wallet_router
@@ -58,6 +59,9 @@ api_router.include_router(
     prefix="/wallet",
     tags=["wallet"],
 )
+
+
+api_router.include_router(organizations_router)
 
 
 # Estaciones
