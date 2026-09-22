@@ -26,6 +26,8 @@ class StationIn(BaseModel):
     device_ip: Optional[str] = None
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
+    organization_id: Optional[int] = None
+    organization_id: Optional[int] = None
 
 
 class StationOut(BaseModel):
@@ -58,6 +60,7 @@ def _row_to_out(row) -> StationOut:
         device_ip=row[3],
         device_model=row[4],
         device_serial=row[5],
+        organization_id=row[6],
     )
 
 
@@ -67,7 +70,7 @@ async def list_stations():
     # ✅ get_conn() es async context manager → usar async with
     async with get_conn() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT id, name, active, device_ip, device_model, device_serial FROM public.station ORDER BY id;")
+            await cur.execute("SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station ORDER BY id;")
             rows = await cur.fetchall()
     return [_row_to_out(r) for r in rows]
 
@@ -77,7 +80,7 @@ async def get_station(station_id: str = Path(..., min_length=1)):
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, name, active, device_ip, device_model, device_serial FROM public.station WHERE id = %s;",
+                "SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station WHERE id = %s;",
                 (station_id,),
             )
             row = await cur.fetchone()
@@ -98,17 +101,21 @@ async def upsert_station(s: StationIn, _user: CurrentUser = Depends(require_admi
                 await cur.execute(
                     """
                     INSERT INTO public.station
-                        (id, name, active, device_ip, device_model, device_serial)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (id, name, active, device_ip, device_model, device_serial, organization_id)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s,
+                        COALESCE(%s, (SELECT id FROM public.organization ORDER BY id LIMIT 1))
+                    )
                     ON CONFLICT (id) DO UPDATE
                         SET name = EXCLUDED.name,
                             active = EXCLUDED.active,
                             device_ip = EXCLUDED.device_ip,
                             device_model = EXCLUDED.device_model,
-                            device_serial = EXCLUDED.device_serial
-                    RETURNING id, name, active, device_ip, device_model, device_serial;
+                            device_serial = EXCLUDED.device_serial,
+                            organization_id = COALESCE(EXCLUDED.organization_id, public.station.organization_id)
+                    RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
                     """,
-                    (s.id, s.name, s.active, s.device_ip, s.device_model, s.device_serial),
+                    (s.id, s.name, s.active, s.device_ip, s.device_model, s.device_serial, s.organization_id),
                 )
                 row = await cur.fetchone()
             except Exception as e:
@@ -132,7 +139,7 @@ async def set_station_active(
                 UPDATE public.station
                    SET active = %s
                  WHERE id = %s
-             RETURNING id, name, active, device_ip, device_model, device_serial;
+             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
                 """,
                 (patch.active, station_id),
             )
@@ -167,6 +174,9 @@ async def update_station(
     if patch.device_serial is not None:
         fields.append("device_serial = %s")
         params.append(patch.device_serial or None)
+    if patch.organization_id is not None:
+        fields.append("organization_id = %s")
+        params.append(patch.organization_id)
 
     if not fields:
         raise HTTPException(status_code=400, detail="No hay campos para actualizar")
@@ -180,7 +190,7 @@ async def update_station(
                 UPDATE public.station
                    SET {", ".join(fields)}
                  WHERE id = %s
-             RETURNING id, name, active, device_ip, device_model, device_serial;
+             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
                 """,
                 tuple(params),
             )
