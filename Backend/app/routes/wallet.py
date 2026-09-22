@@ -2,9 +2,10 @@ import os
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.auth import CurrentUser, require_admin
 from app.db import pool
 from app.services.prepaid import (
     calculate_max_affordable_liters,
@@ -226,6 +227,7 @@ async def get_company_movements(
 async def create_mock_topup(
     company_code: str,
     body: MockTopupIn,
+    _user: CurrentUser = Depends(require_admin),
 ):
     """
     Acredita saldo ficticio para probar el sistema.
