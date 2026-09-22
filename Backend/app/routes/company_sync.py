@@ -45,22 +45,45 @@ async def list_hik_users(version: int = 1, station_id: str | None = None):
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT
-                    name,
-                    code,
-                    pin,
-                    active
-                FROM public.company
-                WHERE pin IS NOT NULL
-                  AND pin <> ''
-                  AND code IS NOT NULL
-                  AND code <> ''
-                ORDER BY code ASC
-                LIMIT 2000
-                """
-            )
+            if station_id:
+                await cur.execute(
+                    """
+                    SELECT
+                        c.name,
+                        c.code,
+                        c.pin,
+                        c.active
+                    FROM public.company c
+                    JOIN public.station_company_access sca
+                      ON sca.company_id = c.id
+                     AND sca.station_id = %s
+                     AND sca.active
+                    WHERE c.pin IS NOT NULL
+                      AND c.pin <> ''
+                      AND c.code IS NOT NULL
+                      AND c.code <> ''
+                    ORDER BY c.code ASC
+                    LIMIT 2000
+                    """,
+                    (station_id,),
+                )
+            else:
+                await cur.execute(
+                    """
+                    SELECT
+                        name,
+                        code,
+                        pin,
+                        active
+                    FROM public.company
+                    WHERE pin IS NOT NULL
+                      AND pin <> ''
+                      AND code IS NOT NULL
+                      AND code <> ''
+                    ORDER BY code ASC
+                    LIMIT 2000
+                    """
+                )
 
             rows = await cur.fetchall()
 
