@@ -6,6 +6,7 @@ import type { Route } from "next";
 import DataTable, { type Column } from "../../../components/DataTable";
 import Badge from "../../../components/Badge";
 import { apiJSON } from "../../../lib/api/api";
+import { useAuth } from "../../../components/AuthContext";
 
 function norm(s?: string | null) {
   return (s ?? "").trim().toLowerCase();
@@ -61,6 +62,7 @@ const emptyDriverForm: DriverForm = {
 };
 
 export default function UsersPage() {
+  const { canAdmin } = useAuth();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -412,9 +414,11 @@ export default function UsersPage() {
           <button className="btn btn-secondary" onClick={loadCompanies} disabled={loading}>
             Recargar
           </button>
-          <button className="btn" onClick={openCreate}>
-            + Nueva empresa
-          </button>
+          {canAdmin && (
+            <button className="btn" onClick={openCreate}>
+              + Nueva empresa
+            </button>
+          )}
         </div>
       </header>
 
