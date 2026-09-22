@@ -214,8 +214,16 @@ export default function AccessPage() {
   }
 
   async function createUser() {
-    if (!createForm.email.trim() || !createForm.password) {
+    const email = createForm.email.trim().toLowerCase();
+
+    if (!email || !createForm.password) {
       setError("Email y contraseña son obligatorios.");
+      return;
+    }
+
+    const asciiEmail = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+    if (!asciiEmail.test(email)) {
+      setError("El email no puede contener ñ, tildes ni caracteres especiales fuera del formato estándar.");
       return;
     }
 
@@ -226,7 +234,7 @@ export default function AccessPage() {
       await apiJSON("/auth/users", {
         method: "POST",
         body: JSON.stringify({
-          email: createForm.email.trim(),
+          email,
           password: createForm.password,
           role: createForm.role,
         }),
