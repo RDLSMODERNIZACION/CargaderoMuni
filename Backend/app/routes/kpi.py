@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from app.auth import CurrentUser, accessible_station_ids, get_current_user
 from app.db import get_conn
 
 router = APIRouter(prefix="/kpi", tags=["kpi"])
@@ -37,6 +38,8 @@ def _build_where(
     dt_to: Optional[datetime],
     station_id: Optional[str],
     company_id: Optional[int],
+    organization_id: Optional[int] = None,
+    allowed_station_ids: Optional[List[str]] = None,
 ) -> Tuple[str, List[Any]]:
     where: List[str] = []
     params: List[Any] = []
@@ -49,10 +52,24 @@ def _build_where(
         where.append("wd.ts < %s")
         params.append(dt_to)
 
-    # filters
+    # scope de seguridad por usuario
+    if allowed_station_ids is not None:
+        if len(allowed_station_ids) == 0:
+            where.append("FALSE")
+        else:
+            where.append("wd.station_id = ANY(%s)")
+            params.append(allowed_station_ids)
+
+    # filtros elegidos por el usuario
     if station_id:
         where.append("wd.station_id = %s")
         params.append(station_id)
+
+    if organization_id is not None:
+        where.append(
+            "wd.station_id IN (SELECT id FROM public.station WHERE organization_id = %s)"
+        )
+        params.append(organization_id)
 
     if company_id is not None:
         where.append("wd.company_id = %s")
@@ -61,6 +78,25 @@ def _build_where(
     if where:
         return "WHERE " + " AND ".join(where), params
     return "", params
+
+
+async def _user_scope(
+    user: CurrentUser,
+    station_id: Optional[str],
+) -> Optional[List[str]]:
+    """
+    None = owner global, sin restricción.
+    Lista = estaciones a las que el usuario tiene acceso.
+    """
+    allowed = await accessible_station_ids(user)
+
+    if allowed is not None and station_id and station_id not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="No tenés acceso a esa estación",
+        )
+
+    return allowed
 
 
 # -----------------------------
@@ -72,6 +108,8 @@ async def kpi_summary(
     to_ts: Optional[str] = Query(None, alias="to"),
     station_id: Optional[str] = None,
     company_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Resumen KPI:
@@ -86,12 +124,15 @@ async def kpi_summary(
     """
     dt_from = _parse_dt(from_ts)
     dt_to = _parse_dt(to_ts)
+    allowed = await _user_scope(user, station_id)
 
     where_sql, params = _build_where(
         dt_from=dt_from,
         dt_to=dt_to,
         station_id=station_id,
         company_id=company_id,
+        organization_id=organization_id,
+        allowed_station_ids=allowed,
     )
 
     sql = f"""
@@ -151,7 +192,9 @@ async def kpi_by_company(
     from_ts: Optional[str] = Query(None, alias="from"),
     to_ts: Optional[str] = Query(None, alias="to"),
     station_id: Optional[str] = None,
+    organization_id: Optional[int] = None,
     top: int = 50,
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Ranking / agregación por empresa (company):
@@ -167,6 +210,7 @@ async def kpi_by_company(
     dt_from = _parse_dt(from_ts)
     dt_to = _parse_dt(to_ts)
     top = max(1, min(int(top), 500))
+    allowed = await _user_scope(user, station_id)
 
     # acá NO filtramos por company_id porque justamente agrupamos por company
     where_sql, params = _build_where(
@@ -174,6 +218,8 @@ async def kpi_by_company(
         dt_to=dt_to,
         station_id=station_id,
         company_id=None,
+        organization_id=organization_id,
+        allowed_station_ids=allowed,
     )
 
     sql = f"""
@@ -229,7 +275,9 @@ async def kpi_by_station(
     from_ts: Optional[str] = Query(None, alias="from"),
     to_ts: Optional[str] = Query(None, alias="to"),
     company_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
     top: int = 50,
+    user: CurrentUser = Depends(get_current_user),
 ):
     """
     Ranking / agregación por estación:
@@ -245,6 +293,7 @@ async def kpi_by_station(
     dt_from = _parse_dt(from_ts)
     dt_to = _parse_dt(to_ts)
     top = max(1, min(int(top), 500))
+    allowed = await _user_scope(user, None)
 
     # acá NO filtramos por station_id porque agrupamos por estación
     where_sql, params = _build_where(
@@ -252,6 +301,8 @@ async def kpi_by_station(
         dt_to=dt_to,
         station_id=None,
         company_id=company_id,
+        organization_id=organization_id,
+        allowed_station_ids=allowed,
     )
 
     sql = f"""
@@ -306,15 +357,20 @@ async def kpi_daily(
     to_ts: Optional[str] = Query(None, alias="to"),
     station_id: Optional[str] = None,
     company_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    user: CurrentUser = Depends(get_current_user),
 ):
     dt_from = _parse_dt(from_ts)
     dt_to = _parse_dt(to_ts)
+    allowed = await _user_scope(user, station_id)
 
     where_sql, params = _build_where(
         dt_from=dt_from,
         dt_to=dt_to,
         station_id=station_id,
         company_id=company_id,
+        organization_id=organization_id,
+        allowed_station_ids=allowed,
     )
 
     sql = f"""
@@ -355,15 +411,20 @@ async def kpi_by_hour(
     to_ts: Optional[str] = Query(None, alias="to"),
     station_id: Optional[str] = None,
     company_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    user: CurrentUser = Depends(get_current_user),
 ):
     dt_from = _parse_dt(from_ts)
     dt_to = _parse_dt(to_ts)
+    allowed = await _user_scope(user, station_id)
 
     where_sql, params = _build_where(
         dt_from=dt_from,
         dt_to=dt_to,
         station_id=station_id,
         company_id=company_id,
+        organization_id=organization_id,
+        allowed_station_ids=allowed,
     )
 
     sql = f"""
@@ -411,15 +472,31 @@ async def kpi_day_dispatches(
     date: str = Query(..., description="Fecha local YYYY-MM-DD"),
     station_id: Optional[str] = None,
     company_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+    user: CurrentUser = Depends(get_current_user),
 ):
     where = [
         "(wd.ts AT TIME ZONE 'America/Argentina/Buenos_Aires')::date = %s::date"
     ]
     params: List[Any] = [date]
+    allowed = await _user_scope(user, station_id)
+
+    if allowed is not None:
+        if len(allowed) == 0:
+            where.append("FALSE")
+        else:
+            where.append("wd.station_id = ANY(%s)")
+            params.append(allowed)
 
     if station_id:
         where.append("wd.station_id = %s")
         params.append(station_id)
+
+    if organization_id is not None:
+        where.append(
+            "wd.station_id IN (SELECT id FROM public.station WHERE organization_id = %s)"
+        )
+        params.append(organization_id)
 
     if company_id is not None:
         where.append("wd.company_id = %s")
