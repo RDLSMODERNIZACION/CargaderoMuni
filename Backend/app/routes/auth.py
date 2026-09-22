@@ -79,10 +79,10 @@ async def create_user(
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
 
-    if len(password) < 8:
+    if len(password) < 6:
         raise HTTPException(
             status_code=400,
-            detail="La contraseña debe tener al menos 8 caracteres",
+            detail="La contraseña debe tener al menos 6 caracteres",
         )
 
     if role not in {"owner", "admin", "operator", "viewer"}:
