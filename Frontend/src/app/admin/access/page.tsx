@@ -27,6 +27,13 @@ export default function AccessPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    email: "",
+    password: "",
+    role: "viewer" as AccessUser["role"],
+  });
 
   async function load() {
     setLoading(true);
@@ -44,6 +51,39 @@ export default function AccessPage() {
   useEffect(() => {
     if (user?.role === "owner") load();
   }, [user?.role]);
+
+  async function createUser() {
+    if (!createForm.email.trim() || !createForm.password) {
+      setError("Email y contraseña son obligatorios.");
+      return;
+    }
+
+    setCreateSaving(true);
+    setError(null);
+
+    try {
+      await apiJSON("/auth/users", {
+        method: "POST",
+        body: JSON.stringify({
+          email: createForm.email.trim(),
+          password: createForm.password,
+          role: createForm.role,
+        }),
+      });
+
+      setCreateOpen(false);
+      setCreateForm({
+        email: "",
+        password: "",
+        role: "viewer",
+      });
+      await load();
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo crear el usuario");
+    } finally {
+      setCreateSaving(false);
+    }
+  }
 
   async function updateAccess(
     item: AccessUser,
@@ -81,9 +121,14 @@ export default function AccessPage() {
             Roles y permisos de los usuarios del panel.
           </p>
         </div>
-        <button className="btn btn-secondary" onClick={load} disabled={loading}>
-          Recargar
-        </button>
+        <div className="flex gap-2">
+          <button className="btn btn-secondary" onClick={load} disabled={loading}>
+            Recargar
+          </button>
+          <button className="btn" onClick={() => setCreateOpen(true)}>
+            + Nuevo usuario
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -168,8 +213,93 @@ export default function AccessPage() {
       </section>
 
       <div className="text-xs text-slate-500">
-        Los usuarios nuevos se crean en Supabase Auth y quedan como Solo lectura hasta que el owner les asigne otro rol.
+        El Owner puede crear usuarios directamente desde acá. Supabase Auth se gestiona por detrás.
       </div>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-lg p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">Nuevo usuario</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Creá un acceso al panel y asignale un rol.
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setCreateOpen(false)}
+                disabled={createSaving}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid gap-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Email</label>
+                <input
+                  type="email"
+                  className="input"
+                  value={createForm.email}
+                  onChange={(e) =>
+                    setCreateForm((p) => ({ ...p, email: e.target.value }))
+                  }
+                  autoComplete="off"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Contraseña inicial</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={createForm.password}
+                  onChange={(e) =>
+                    setCreateForm((p) => ({ ...p, password: e.target.value }))
+                  }
+                  autoComplete="new-password"
+                />
+                <div className="text-xs text-slate-500">
+                  Mínimo 8 caracteres.
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Rol</label>
+                <select
+                  className="select"
+                  value={createForm.role}
+                  onChange={(e) =>
+                    setCreateForm((p) => ({
+                      ...p,
+                      role: e.target.value as AccessUser["role"],
+                    }))
+                  }
+                >
+                  <option value="viewer">Solo lectura</option>
+                  <option value="operator">Operador</option>
+                  <option value="admin">Administrador</option>
+                  <option value="owner">Owner</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setCreateOpen(false)}
+                disabled={createSaving}
+              >
+                Cancelar
+              </button>
+              <button className="btn" onClick={createUser} disabled={createSaving}>
+                {createSaving ? "Creando…" : "Crear usuario"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
