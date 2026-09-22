@@ -7,11 +7,12 @@ from datetime import datetime
 from typing import Optional, Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
+from app.auth import CurrentUser, require_admin, require_operator
 from app.db import pool
 from app.services.hik_sync import resolve_driver
 from app.services.vehicle_ai import analyze_dispatch_vehicle
@@ -558,7 +559,7 @@ async def get_dispatch(dispatch_id: int):
 # ADMIN DISPATCH CRUD
 # =========================
 @router.post("/dispatch/admin")
-async def create_dispatch_admin(body: AdminDispatchCreate):
+async def create_dispatch_admin(body: AdminDispatchCreate, _user: CurrentUser = Depends(require_operator)):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -602,7 +603,7 @@ async def create_dispatch_admin(body: AdminDispatchCreate):
 
 
 @router.patch("/dispatch/{dispatch_id}")
-async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch):
+async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch, _user: CurrentUser = Depends(require_operator)):
     updates = []
     params = []
 
@@ -667,7 +668,7 @@ async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch):
 
 
 @router.delete("/dispatch/{dispatch_id}")
-async def delete_dispatch_admin(dispatch_id: int):
+async def delete_dispatch_admin(dispatch_id: int, _user: CurrentUser = Depends(require_admin)):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
