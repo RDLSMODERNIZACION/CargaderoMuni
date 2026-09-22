@@ -6,9 +6,10 @@ from typing import Any, Dict, Optional
 
 import httpx
 import xmltodict
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException
 from fastapi.responses import JSONResponse
 
+from app.auth import CurrentUser, require_operator
 from app.db import pool
 
 router = APIRouter()
@@ -242,7 +243,7 @@ async def webhook(request: Request):
 
 
 @router.post("/test")
-async def test_event(payload: Dict[str, Any]):
+async def test_event(payload: Dict[str, Any], _user: CurrentUser = Depends(require_operator)):
     ev = {
         "station_id": payload.get("station_id") or DEFAULT_STATION_ID,
         "ts": datetime.datetime.now(datetime.timezone.utc),
