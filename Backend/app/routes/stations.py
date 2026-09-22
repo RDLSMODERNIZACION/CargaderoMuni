@@ -12,7 +12,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from app.auth import CurrentUser, require_admin
+from app.auth import CurrentUser, accessible_station_ids, get_current_user, require_station_access
 from app.db import get_conn
 
 router = APIRouter(prefix="/stations", tags=["stations"])
@@ -67,17 +67,43 @@ def _row_to_out(row) -> StationOut:
 
 # --------- Endpoints ---------
 @router.get("", response_model=List[StationOut])
-async def list_stations():
-    # ✅ get_conn() es async context manager → usar async with
+async def list_stations(user: CurrentUser = Depends(get_current_user)):
+    allowed = await accessible_station_ids(user)
+
+    if user.role != "owner":
+        raise HTTPException(status_code=403, detail="Solo el owner global puede crear estaciones")
+
     async with get_conn() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station ORDER BY id;")
+            if allowed is None:
+                await cur.execute(
+                    "SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station ORDER BY id;"
+                )
+            elif not allowed:
+                rows = []
+                return []
+            else:
+                await cur.execute(
+                    """
+                    SELECT id, name, active, device_ip, device_model, device_serial, organization_id
+                    FROM public.station
+                    WHERE id = ANY(%s)
+                    ORDER BY id
+                    """,
+                    (allowed,),
+                )
             rows = await cur.fetchall()
+
     return [_row_to_out(r) for r in rows]
 
 
 @router.get("/{station_id}", response_model=StationOut)
-async def get_station(station_id: str = Path(..., min_length=1)):
+async def get_station(
+    station_id: str = Path(..., min_length=1),
+    user: CurrentUser = Depends(get_current_user),
+):
+    await require_station_access(user, station_id)
+
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -92,7 +118,7 @@ async def get_station(station_id: str = Path(..., min_length=1)):
 
 
 @router.post("", response_model=StationOut, status_code=201)
-async def upsert_station(s: StationIn, _user: CurrentUser = Depends(require_admin)):
+async def upsert_station(s: StationIn, user: CurrentUser = Depends(get_current_user)):
     """
     Crea o actualiza una estación (upsert por id).
     """
@@ -131,8 +157,9 @@ async def upsert_station(s: StationIn, _user: CurrentUser = Depends(require_admi
 async def set_station_active(
     patch: StationActivePatch,
     station_id: str = Path(..., min_length=1),
-    _user: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(get_current_user),
 ):
+    await require_station_access(user, station_id, {"owner", "admin"})
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -155,8 +182,9 @@ async def set_station_active(
 async def update_station(
     patch: StationPatch,
     station_id: str = Path(..., min_length=1),
-    _user: CurrentUser = Depends(require_admin),
+    user: CurrentUser = Depends(get_current_user),
 ):
+    await require_station_access(user, station_id, {"owner", "admin"})
     fields = []
     params = []
 
@@ -204,7 +232,12 @@ async def update_station(
 
 
 @router.delete("/{station_id}")
-async def delete_station(station_id: str = Path(..., min_length=1), _user: CurrentUser = Depends(require_admin)):
+async def delete_station(
+    station_id: str = Path(..., min_length=1),
+    user: CurrentUser = Depends(get_current_user),
+):
+    await require_station_access(user, station_id, {"owner", "admin"})
+
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
