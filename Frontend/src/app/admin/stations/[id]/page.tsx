@@ -15,6 +15,13 @@ type Station = {
   organization_id?: number | null;
 };
 
+type Organization = {
+  id: number;
+  name: string;
+  active: boolean;
+  station_count: number;
+};
+
 type HealthItem = {
   device_id: string;
   device_type: string;
@@ -85,12 +92,15 @@ export default function StationDetailPage() {
   const [saving, setSaving] = useState(false);
   const [editName, setEditName] = useState("");
   const [editActive, setEditActive] = useState(true);
+  const [editOrganizationId, setEditOrganizationId] = useState("");
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
 
   async function loadStation() {
     const data = await apiJSON<Station>("/stations/" + encodeURIComponent(stationId));
     setStation(data);
     setEditName(data.name || "");
     setEditActive(data.active);
+    setEditOrganizationId(data.organization_id ? String(data.organization_id) : "");
   }
 
   async function loadHealth() {
@@ -118,11 +128,17 @@ export default function StationDetailPage() {
     }
   }
 
+  async function loadOrganizations() {
+    if (user?.role !== "owner") return;
+    const data = await apiJSON<{ ok: boolean; items: Organization[] }>("/organizations");
+    setOrganizations(Array.isArray(data?.items) ? data.items : []);
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([loadStation(), loadHealth()]);
+      await Promise.all([loadStation(), loadHealth(), loadOrganizations()]);
     } catch (e: any) {
       setError(e?.message ?? "No se pudo cargar la estación");
     } finally {
@@ -147,6 +163,9 @@ export default function StationDetailPage() {
         body: JSON.stringify({
           name: editName.trim() || null,
           active: editActive,
+          ...(user?.role === "owner" && editOrganizationId
+            ? { organization_id: Number(editOrganizationId) }
+            : {}),
         }),
       });
       setEditOpen(false);
@@ -519,6 +538,24 @@ export default function StationDetailPage() {
                   onChange={(e) => setEditName(e.target.value)}
                 />
               </div>
+
+              {user?.role === "owner" && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Organización administradora</label>
+                  <select
+                    className="select"
+                    value={editOrganizationId}
+                    onChange={(e) => setEditOrganizationId(e.target.value)}
+                  >
+                    <option value="">Sin organización</option>
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <label className="flex items-center gap-2">
                 <input
