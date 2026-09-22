@@ -548,7 +548,7 @@ export default function AccessPage() {
                   autoComplete="new-password"
                 />
                 <div className="text-xs text-slate-500">
-                  Mínimo 8 caracteres.
+                  Mínimo 6 caracteres.
                 </div>
               </div>
 
