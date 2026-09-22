@@ -6,6 +6,7 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
 import { apiJSON } from "../../../lib/api/api";
+import { useAuth } from "../../../components/AuthContext";
 
 const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
 
@@ -67,6 +68,7 @@ function photoCount(item: DispatchItem) {
 }
 
 export default function DispatchesPage() {
+  const { canOperate } = useAuth();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -264,9 +266,11 @@ export default function DispatchesPage() {
           <button className="btn btn-secondary flex-1 justify-center sm:flex-none" onClick={loadDispatches} disabled={loading}>
             Recargar
           </button>
-          <button className="btn flex-1 justify-center sm:flex-none" onClick={() => setCreateOpen(true)}>
-            + Nuevo despacho
-          </button>
+          {canOperate && (
+            <button className="btn flex-1 justify-center sm:flex-none" onClick={() => setCreateOpen(true)}>
+              + Nuevo despacho
+            </button>
+          )}
         </div>
       </header>
 
