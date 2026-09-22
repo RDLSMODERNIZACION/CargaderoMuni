@@ -165,7 +165,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           }
           href="/admin/access"
         >
-          Accesos
+          Configuración
         </Link>
       )}
     </nav>
