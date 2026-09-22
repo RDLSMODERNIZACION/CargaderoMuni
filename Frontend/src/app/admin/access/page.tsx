@@ -63,6 +63,9 @@ export default function AccessPage() {
   const [stationAccess, setStationAccess] = useState<StationAccess[]>([]);
   const [orgName, setOrgName] = useState("");
   const [orgSaving, setOrgSaving] = useState(false);
+  const [orgCreateOpen, setOrgCreateOpen] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgSaving, setNewOrgSaving] = useState(false);
   const [createSaving, setCreateSaving] = useState(false);
   const [createForm, setCreateForm] = useState({
     email: "",
@@ -119,6 +122,38 @@ export default function AccessPage() {
       setOrgName(org?.name || "");
     } catch (e: any) {
       setError(e?.message ?? "No se pudo cargar la organización");
+    }
+  }
+
+  async function createOrganization() {
+    const name = newOrgName.trim();
+    if (!name) {
+      setError("El nombre de la organización es obligatorio.");
+      return;
+    }
+
+    setNewOrgSaving(true);
+    setError(null);
+    try {
+      const data = await apiJSON<{
+        ok: boolean;
+        item: Organization;
+      }>("/organizations", {
+        method: "POST",
+        body: JSON.stringify({ name, active: true }),
+      });
+
+      setOrgCreateOpen(false);
+      setNewOrgName("");
+      await load();
+
+      if (data?.item?.id) {
+        setSelectedOrgId(data.item.id);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo crear la organización");
+    } finally {
+      setNewOrgSaving(false);
     }
   }
 
@@ -387,7 +422,8 @@ export default function AccessPage() {
 
       <section className="card space-y-5">
         <div className="flex items-end justify-between gap-3 flex-wrap">
-          <div className="min-w-[260px]">
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="min-w-[260px]">
             <label className="text-xs text-slate-500">Organización administradora</label>
             <select
               className="select mt-1"
@@ -400,6 +436,10 @@ export default function AccessPage() {
                 </option>
               ))}
             </select>
+            </div>
+            <button className="btn btn-secondary" onClick={() => setOrgCreateOpen(true)}>
+              + Nueva organización
+            </button>
           </div>
 
           {selectedOrgId && (
@@ -510,6 +550,56 @@ export default function AccessPage() {
         </div>
       </section>
 
+
+      {orgCreateOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-lg p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h2 className="text-xl font-semibold">Nueva organización</h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Agrupa los cargaderos administrados por una misma empresa o entidad.
+                </p>
+              </div>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setOrgCreateOpen(false)}
+                disabled={newOrgSaving}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-500">Nombre</label>
+              <input
+                className="input"
+                value={newOrgName}
+                onChange={(e) => setNewOrgName(e.target.value)}
+                placeholder="Ej. Parada"
+                autoFocus
+              />
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setOrgCreateOpen(false)}
+                disabled={newOrgSaving}
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn"
+                onClick={createOrganization}
+                disabled={newOrgSaving}
+              >
+                {newOrgSaving ? "Creando…" : "Crear organización"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {createOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
