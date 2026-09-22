@@ -167,8 +167,17 @@ async def maybe_start_dispatch(ev: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, name FROM public.company WHERE code=%s AND active",
-                (company_code,),
+                """
+                SELECT c.id, c.name
+                FROM public.company c
+                JOIN public.station_company_access sca
+                  ON sca.company_id=c.id
+                 AND sca.station_id=%s
+                 AND sca.active
+                WHERE c.code=%s
+                  AND c.active
+                """,
+                (station_id, company_code),
             )
             r = await cur.fetchone()
             if not r:
