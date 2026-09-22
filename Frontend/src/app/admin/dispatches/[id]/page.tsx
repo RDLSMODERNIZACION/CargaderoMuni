@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Tabs from "../../../../components/Tabs";
 import { apiJSON } from "../../../../lib/api/api";
+import { useAuth } from "../../../../components/AuthContext";
 import { fmtDate, fmtLiters } from "../../../../lib/utils";
 
 type VehicleAI = {
@@ -91,6 +92,7 @@ function StatusPill({ ok, children }: { ok?: boolean | null; children: React.Rea
 }
 
 export default function DispatchDetailPage() {
+  const { canAdmin, canOperate } = useAuth();
   const params = useParams();
   const router = useRouter();
   const dispatchId = Number(params.id);
@@ -509,16 +511,20 @@ export default function DispatchDetailPage() {
           <button className="btn btn-secondary" onClick={load}>
             Actualizar
           </button>
-          <button className="btn btn-secondary" onClick={openEdit}>
-            Editar
-          </button>
-          <button
-            className="btn"
-            onClick={removeDispatch}
-            style={{ borderColor: "#fecaca", color: "#b91c1c" }}
-          >
-            Eliminar
-          </button>
+          {canOperate && (
+            <button className="btn btn-secondary" onClick={openEdit}>
+              Editar
+            </button>
+          )}
+          {canAdmin && (
+            <button
+              className="btn"
+              onClick={removeDispatch}
+              style={{ borderColor: "#fecaca", color: "#b91c1c" }}
+            >
+              Eliminar
+            </button>
+          )}
         </div>
       </header>
 
