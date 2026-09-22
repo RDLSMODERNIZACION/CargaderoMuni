@@ -373,7 +373,11 @@ export default function CompanyDetailPage() {
               </div>
               <button
                 className="btn btn-secondary"
-                onClick={() => setDriverFormOpen(false)}
+                onClick={() => {
+                  setDriverFormOpen(false);
+                  setEditingDriver(null);
+                  setDriverForm(emptyDriverForm);
+                }}
                 disabled={driverSaving}
               >
                 Cerrar
@@ -441,22 +445,6 @@ export default function CompanyDetailPage() {
                     autoComplete="off"
                   />
                 </div>
-              </div>
-
-              <div className="hidden">
-                <label className="text-xs text-slate-500">Código RFID / UID</label>
-                <input
-                  className="input font-mono"
-                  value={driverForm.rfid_uid}
-                  onChange={(e) =>
-                    setDriverForm((p) => ({ ...p, rfid_uid: e.target.value.toUpperCase() }))
-                  }
-                  placeholder="Pasar tarjeta o escribir UID"
-                  autoComplete="off"
-                />
-                <p className="text-xs text-slate-500">
-                  Puede quedar vacío hasta que confirmemos qué valor entrega el lector.
-                </p>
               </div>
 
               <label className="flex items-center gap-2">
