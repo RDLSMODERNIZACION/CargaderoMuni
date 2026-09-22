@@ -24,6 +24,7 @@ type Driver = {
   rfid_credential_id?: number | null;
   rfid_uid?: string | null;
   rfid_active?: boolean | null;
+  printed_card_code?: string | null;
 };
 
 type DriverForm = {
@@ -31,6 +32,7 @@ type DriverForm = {
   document_number: string;
   phone: string;
   rfid_uid: string;
+  printed_card_code: string;
   enabled: boolean;
 };
 
@@ -39,6 +41,7 @@ const emptyDriverForm: DriverForm = {
   document_number: "",
   phone: "",
   rfid_uid: "",
+  printed_card_code: "",
   enabled: true,
 };
 
@@ -54,6 +57,7 @@ export default function CompanyDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [driverFormOpen, setDriverFormOpen] = useState(false);
+  const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
   const [driverForm, setDriverForm] = useState<DriverForm>(emptyDriverForm);
   const [driverSaving, setDriverSaving] = useState(false);
 
@@ -92,6 +96,25 @@ export default function CompanyDetailPage() {
     loadAll();
   }, [companyId]);
 
+  function openCreateDriver() {
+    setEditingDriver(null);
+    setDriverForm(emptyDriverForm);
+    setDriverFormOpen(true);
+  }
+
+  function openEditDriver(driver: Driver) {
+    setEditingDriver(driver);
+    setDriverForm({
+      name: driver.name || "",
+      document_number: driver.document_number || "",
+      phone: driver.phone || "",
+      rfid_uid: driver.rfid_uid || "",
+      printed_card_code: driver.printed_card_code || "",
+      enabled: driver.enabled,
+    });
+    setDriverFormOpen(true);
+  }
+
   async function saveDriver() {
     if (!company || !driverForm.name.trim()) {
       setError("El nombre del camionero es obligatorio.");
@@ -102,18 +125,27 @@ export default function CompanyDetailPage() {
     setError(null);
 
     try {
-      await apiJSON("/company/id/" + company.id + "/drivers", {
-        method: "POST",
-        body: JSON.stringify({
-          name: driverForm.name.trim(),
-          document_number: driverForm.document_number.trim() || null,
-          phone: driverForm.phone.trim() || null,
-          rfid_uid: driverForm.rfid_uid.trim() || null,
-          enabled: driverForm.enabled,
-        }),
-      });
+      const payload = {
+        name: driverForm.name.trim(),
+        document_number: driverForm.document_number.trim() || null,
+        phone: driverForm.phone.trim() || null,
+        rfid_uid: driverForm.rfid_uid.trim() || null,
+        printed_card_code: driverForm.printed_card_code.trim() || null,
+        enabled: driverForm.enabled,
+      };
+
+      await apiJSON(
+        editingDriver
+          ? "/company/id/" + company.id + "/drivers/" + editingDriver.id
+          : "/company/id/" + company.id + "/drivers",
+        {
+          method: editingDriver ? "PATCH" : "POST",
+          body: JSON.stringify(payload),
+        }
+      );
 
       setDriverFormOpen(false);
+      setEditingDriver(null);
       setDriverForm(emptyDriverForm);
       await loadDrivers();
     } catch (e: any) {
@@ -204,7 +236,7 @@ export default function CompanyDetailPage() {
                   Cada camionero queda asociado a esta empresa y a su RFID.
                 </p>
               </div>
-              <button className="btn" onClick={() => setDriverFormOpen(true)}>
+              <button className="btn" onClick={openCreateDriver}>
                 + Agregar camionero
               </button>
             </div>
@@ -224,6 +256,7 @@ export default function CompanyDetailPage() {
                       <th className="text-left font-medium px-4 py-3">DNI</th>
                       <th className="text-left font-medium px-4 py-3">Teléfono</th>
                       <th className="text-left font-medium px-4 py-3">RFID / UID</th>
+                      <th className="text-left font-medium px-4 py-3">Código impreso</th>
                       <th className="text-left font-medium px-4 py-3">Estado</th>
                       <th className="text-right font-medium px-4 py-3">Acciones</th>
                     </tr>
@@ -248,12 +281,24 @@ export default function CompanyDetailPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
+                          {driver.printed_card_code ? (
+                            <code className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">
+                              {driver.printed_card_code}
+                            </code>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
                           <Badge color={driver.enabled ? "green" : "red"}>
                             {driver.enabled ? "Activo" : "Inactivo"}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-end gap-2">
+                            <button className="btn btn-secondary" onClick={() => openEditDriver(driver)}>
+                              Editar
+                            </button>
                             <button className="btn btn-secondary" onClick={() => toggleDriver(driver)}>
                               {driver.enabled ? "Desactivar" : "Activar"}
                             </button>
@@ -319,7 +364,9 @@ export default function CompanyDetailPage() {
           <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl p-5 shadow-xl">
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>
-                <h2 className="text-xl font-semibold">Agregar camionero</h2>
+                <h2 className="text-xl font-semibold">
+                  {editingDriver ? "Editar camionero" : "Agregar camionero"}
+                </h2>
                 <p className="text-sm text-slate-500 mt-1">
                   Empresa: <b>{company.name}</b>
                 </p>
@@ -368,7 +415,35 @@ export default function CompanyDetailPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Código RFID / UID</label>
+                  <input
+                    className="input font-mono"
+                    value={driverForm.rfid_uid}
+                    onChange={(e) =>
+                      setDriverForm((p) => ({ ...p, rfid_uid: e.target.value.toUpperCase() }))
+                    }
+                    placeholder="UID leído por el teclado"
+                    autoComplete="off"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500">Código impreso en tarjeta</label>
+                  <input
+                    className="input font-mono"
+                    value={driverForm.printed_card_code}
+                    onChange={(e) =>
+                      setDriverForm((p) => ({ ...p, printed_card_code: e.target.value.trim() }))
+                    }
+                    placeholder="Número visible en el plástico"
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+
+              <div className="hidden">
                 <label className="text-xs text-slate-500">Código RFID / UID</label>
                 <input
                   className="input font-mono"
@@ -405,7 +480,11 @@ export default function CompanyDetailPage() {
                 Cancelar
               </button>
               <button className="btn" onClick={saveDriver} disabled={driverSaving}>
-                {driverSaving ? "Guardando…" : "Guardar camionero"}
+                {driverSaving
+                  ? "Guardando…"
+                  : editingDriver
+                  ? "Guardar cambios"
+                  : "Guardar camionero"}
               </button>
             </div>
           </div>
