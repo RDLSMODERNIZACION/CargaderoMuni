@@ -24,6 +24,7 @@ class DriverIn(BaseModel):
     document_number: Optional[str] = None
     phone: Optional[str] = None
     rfid_uid: Optional[str] = None
+    printed_card_code: Optional[str] = None
     enabled: bool = True
 
 
@@ -32,6 +33,7 @@ class DriverPatch(BaseModel):
     document_number: Optional[str] = None
     phone: Optional[str] = None
     rfid_uid: Optional[str] = None
+    printed_card_code: Optional[str] = None
     enabled: Optional[bool] = None
 
 
@@ -197,6 +199,7 @@ async def list_company_drivers(company_id: int):
                     u.phone,
                     u.enabled,
                     u.device_employee_no,
+                    u.printed_card_code,
                     cred.id,
                     cred.value,
                     cred.active,
@@ -228,11 +231,12 @@ async def list_company_drivers(company_id: int):
                 "phone": r[3],
                 "enabled": r[4],
                 "device_employee_no": r[5],
-                "rfid_credential_id": r[6],
-                "rfid_uid": r[7],
-                "rfid_active": r[8] if r[6] is not None else None,
-                "rfid_valid_from": r[9],
-                "rfid_valid_until": r[10],
+                "printed_card_code": r[6],
+                "rfid_credential_id": r[7],
+                "rfid_uid": r[8],
+                "rfid_active": r[9] if r[7] is not None else None,
+                "rfid_valid_from": r[10],
+                "rfid_valid_until": r[11],
             }
             for r in rows
         ],
@@ -260,8 +264,8 @@ async def create_company_driver(company_id: int, body: DriverIn):
                 await cur.execute(
                     """
                     INSERT INTO public.pin_user
-                        (name, company_id, document_number, phone, enabled, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, now())
+                        (name, company_id, document_number, phone, printed_card_code, enabled, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, now())
                     RETURNING id
                     """,
                     (
@@ -269,6 +273,7 @@ async def create_company_driver(company_id: int, body: DriverIn):
                         company_id,
                         body.document_number.strip() if body.document_number else None,
                         body.phone.strip() if body.phone else None,
+                        body.printed_card_code.strip() if body.printed_card_code else None,
                         body.enabled,
                     ),
                 )
@@ -318,6 +323,9 @@ async def update_company_driver(company_id: int, driver_id: int, body: DriverPat
     if "phone" in payload:
         fields.append("phone = %s")
         params.append((payload["phone"] or "").strip() or None)
+    if "printed_card_code" in payload:
+        fields.append("printed_card_code = %s")
+        params.append((payload["printed_card_code"] or "").strip() or None)
     if "enabled" in payload:
         fields.append("enabled = %s")
         params.append(payload["enabled"])
