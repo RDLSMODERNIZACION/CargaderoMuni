@@ -71,6 +71,9 @@ async def update_user_access(
     if user_id == owner.id and body.active is False:
         raise HTTPException(status_code=400, detail="No podés deshabilitar tu propio usuario")
 
+    if user_id == owner.id and body.role is not None and body.role != "owner":
+        raise HTTPException(status_code=400, detail="No podés quitarte el rol owner a vos mismo")
+
     fields = []
     params = []
 
