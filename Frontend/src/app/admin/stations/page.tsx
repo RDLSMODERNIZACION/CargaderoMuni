@@ -19,22 +19,32 @@ export type Station = {
   connections_total?: number;
   connections_online?: number;
   connections_problems?: number;
+  organization_id?: number | null;
 };
 
 type StationForm = {
   id: string;
   name: string;
   active: boolean;
+  organization_id: string;
+};
+
+type Organization = {
+  id: number;
+  name: string;
+  active: boolean;
+  station_count: number;
 };
 
 const emptyForm: StationForm = {
   id: "",
   name: "",
   active: true,
+  organization_id: "",
 };
 
 export default function StationsPage() {
-  const { canAdmin } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [rows, setRows] = useState<Station[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,12 +52,13 @@ export default function StationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<StationForm>(emptyForm);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const [data, summary] = await Promise.all([
+      const [data, summary, orgData] = await Promise.all([
         apiJSON<Station[]>("/stations"),
         apiJSON<{
           ok: boolean;
@@ -59,9 +70,11 @@ export default function StationsPage() {
             problems: number;
           }>;
         }>("/system-health/stations-summary"),
+        apiJSON<{ ok: boolean; items: Organization[] }>("/organizations"),
       ]);
 
       const stations = Array.isArray(data) ? data : [];
+      setOrganizations(Array.isArray(orgData?.items) ? orgData.items : []);
       const summaries = Array.isArray(summary?.items) ? summary.items : [];
       const byStation = new Map(summaries.map((s) => [String(s.station_id), s]));
 
@@ -89,7 +102,11 @@ export default function StationsPage() {
   }, []);
 
   function openCreate() {
-    setForm(emptyForm);
+    const firstOrg = organizations[0];
+    setForm({
+      ...emptyForm,
+      organization_id: firstOrg ? String(firstOrg.id) : "",
+    });
     setFormOpen(true);
   }
 
@@ -112,6 +129,9 @@ export default function StationsPage() {
           device_ip: null,
           device_model: null,
           device_serial: null,
+          organization_id: form.organization_id
+            ? Number(form.organization_id)
+            : null,
         }),
       });
 
@@ -182,7 +202,7 @@ export default function StationsPage() {
           <button className="btn btn-secondary" onClick={load} disabled={loading}>
             Recargar
           </button>
-          {canAdmin && (
+          {user?.role === "owner" && (
             <button className="btn" onClick={openCreate}>
               + Nueva estación
             </button>
@@ -253,6 +273,24 @@ export default function StationsPage() {
                   onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                   placeholder="Nombre visible"
                 />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Organización</label>
+                <select
+                  className="select"
+                  value={form.organization_id}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, organization_id: e.target.value }))
+                  }
+                >
+                  <option value="">Seleccionar organización</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <label className="flex items-center gap-2">

@@ -12,6 +12,7 @@ type Station = {
   id: string;
   name?: string | null;
   active: boolean;
+  organization_id?: number | null;
 };
 
 type HealthItem = {
@@ -68,7 +69,7 @@ function ago(seconds?: number | null) {
 }
 
 export default function StationDetailPage() {
-  const { canAdmin } = useAuth();
+  const { user, canAdmin } = useAuth();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const stationId = decodeURIComponent(params.id || "");
@@ -188,6 +189,17 @@ export default function StationDetailPage() {
       setError(e?.message ?? "No se pudo eliminar la estación");
     }
   }
+
+  const scopedStationRole = user?.station_roles?.[stationId];
+  const scopedOrgRole = station?.organization_id
+    ? user?.organization_roles?.[String(station.organization_id)]
+    : undefined;
+
+  const canAdminThisStation =
+    canAdmin ||
+    scopedStationRole === "admin" ||
+    scopedOrgRole === "admin" ||
+    scopedOrgRole === "owner";
 
   const maxOffline = Math.max(1, ...weekly.map((d) => d.offline_minutes));
   const totalIncidents = weekly.reduce((acc, d) => acc + d.incidents, 0);
@@ -424,7 +436,7 @@ export default function StationDetailPage() {
         label: "Acciones",
         content: (
           <section className="card">
-            {canAdmin ? (
+            {canAdminThisStation ? (
             <div className="flex flex-wrap gap-2">
               <button className="btn btn-secondary" onClick={() => setEditOpen(true)}>
                 Editar
@@ -447,7 +459,7 @@ export default function StationDetailPage() {
         ),
       },
     ],
-    [station, healthItems, weekly, events, healthLoading, maxOffline, totalIncidents, totalOffline]
+    [station, healthItems, weekly, events, healthLoading, maxOffline, totalIncidents, totalOffline, canAdminThisStation]
   );
 
   if (loading) {

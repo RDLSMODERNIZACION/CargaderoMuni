@@ -28,6 +28,28 @@ class UserCreateIn(BaseModel):
 
 @router.get("/me")
 async def me(user: CurrentUser = Depends(get_current_user)):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT organization_id, role
+                FROM public.organization_user
+                WHERE user_id=%s AND active
+                """,
+                (user.id,),
+            )
+            org_rows = await cur.fetchall()
+
+            await cur.execute(
+                """
+                SELECT station_id, role
+                FROM public.station_user
+                WHERE user_id=%s AND active
+                """,
+                (user.id,),
+            )
+            station_rows = await cur.fetchall()
+
     return {
         "ok": True,
         "user": {
@@ -35,6 +57,12 @@ async def me(user: CurrentUser = Depends(get_current_user)):
             "email": user.email,
             "role": user.role,
             "active": user.active,
+            "organization_roles": {
+                str(r[0]): str(r[1]) for r in org_rows
+            },
+            "station_roles": {
+                str(r[0]): str(r[1]) for r in station_rows
+            },
         },
     }
 

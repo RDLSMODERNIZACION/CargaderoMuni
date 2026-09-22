@@ -125,3 +125,79 @@ def require_roles(*roles: str):
 require_owner = require_roles("owner")
 require_admin = require_roles("owner", "admin")
 require_operator = require_roles("owner", "admin", "operator")
+
+
+async def accessible_station_ids(user: CurrentUser) -> list[str] | None:
+    """
+    None = acceso global a todas las estaciones.
+    Lista = solo esas estaciones.
+    """
+    if user.role == "owner":
+        return None
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT DISTINCT s.id
+                FROM public.station s
+                LEFT JOIN public.organization_user ou
+                  ON ou.organization_id = s.organization_id
+                 AND ou.user_id = %s
+                 AND ou.active
+                LEFT JOIN public.station_user su
+                  ON su.station_id = s.id
+                 AND su.user_id = %s
+                 AND su.active
+                WHERE ou.user_id IS NOT NULL
+                   OR su.user_id IS NOT NULL
+                ORDER BY s.id
+                """,
+                (user.id, user.id),
+            )
+            rows = await cur.fetchall()
+
+    return [str(r[0]) for r in rows]
+
+
+async def require_station_access(
+    user: CurrentUser,
+    station_id: str,
+    allowed_roles: set[str] | None = None,
+) -> str:
+    if user.role == "owner":
+        return "owner"
+
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT
+                    ou.role AS organization_role,
+                    su.role AS station_role
+                FROM public.station s
+                LEFT JOIN public.organization_user ou
+                  ON ou.organization_id = s.organization_id
+                 AND ou.user_id = %s
+                 AND ou.active
+                LEFT JOIN public.station_user su
+                  ON su.station_id = s.id
+                 AND su.user_id = %s
+                 AND su.active
+                WHERE s.id = %s
+                """,
+                (user.id, user.id, station_id),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Estación no encontrada")
+
+    role = row[1] or row[0]
+    if not role:
+        raise HTTPException(status_code=403, detail="No tenés acceso a esta estación")
+
+    if allowed_roles and role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="No tenés permisos para esta acción")
+
+    return str(role)
