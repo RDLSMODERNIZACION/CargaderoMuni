@@ -12,7 +12,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.types.json import Jsonb
 
-from app.auth import CurrentUser, require_admin, require_operator
+from app.auth import (
+    CurrentUser,
+    accessible_station_ids,
+    get_current_user,
+    require_station_access,
+)
 from app.db import pool
 from app.services.hik_sync import resolve_driver
 from app.services.vehicle_ai import analyze_dispatch_vehicle
@@ -382,7 +387,11 @@ async def set_liters(dispatch_id: int, body: SetLitersIn):
 # RECENT
 # =========================
 @router.get("/dispatch/recent")
-async def recent(limit: int = 20, station_id: Optional[str] = None):
+async def recent(
+    limit: int = 20,
+    station_id: Optional[str] = None,
+    user: CurrentUser = Depends(get_current_user),
+):
     """
     Trae despachos recientes.
 
@@ -395,62 +404,56 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
       - photo_paths: todas las fotos guardadas
     """
     limit = max(1, min(int(limit), 500))
+    allowed = await accessible_station_ids(user)
+
+    if allowed is not None and station_id and station_id not in allowed:
+        raise HTTPException(status_code=403, detail="No tenés acceso a esa estación")
 
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
+            where = []
+            params = []
+
+            if allowed is not None:
+                if not allowed:
+                    where.append("FALSE")
+                else:
+                    where.append("wd.station_id = ANY(%s)")
+                    params.append(allowed)
+
             if station_id:
-                await cur.execute(
-                    """
-                    SELECT
-                        wd.id,
-                        wd.ts,
-                        wd.station_id,
-                        wd.liters,
-                        wd.flow_l_min,
-                        wd.photo_path,
-                        wd.photo_paths,
-                        wd.note,
-                        wd.ai_vehicle_analysis,
-                        c.id AS company_id,
-                        c.name AS company_name,
-                        c.code AS company_code,
-                        wd.pin_user_id, p.name AS driver_name, wd.access_method
-                    FROM public.water_dispatch wd
-                    LEFT JOIN public.company c
-                        ON c.id = wd.company_id
-                    LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
-                    WHERE wd.station_id = %s
-                    ORDER BY wd.ts DESC
-                    LIMIT %s
-                    """,
-                    (station_id, limit),
-                )
-            else:
-                await cur.execute(
-                    """
-                    SELECT
-                        wd.id,
-                        wd.ts,
-                        wd.station_id,
-                        wd.liters,
-                        wd.flow_l_min,
-                        wd.photo_path,
-                        wd.photo_paths,
-                        wd.note,
-                        wd.ai_vehicle_analysis,
-                        c.id AS company_id,
-                        c.name AS company_name,
-                        c.code AS company_code,
-                        wd.pin_user_id, p.name AS driver_name, wd.access_method
-                    FROM public.water_dispatch wd
-                    LEFT JOIN public.company c
-                        ON c.id = wd.company_id
-                    LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
-                    ORDER BY wd.ts DESC
-                    LIMIT %s
-                    """,
-                    (limit,),
-                )
+                where.append("wd.station_id = %s")
+                params.append(station_id)
+
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+            params.append(limit)
+
+            await cur.execute(
+                f"""
+                SELECT
+                    wd.id,
+                    wd.ts,
+                    wd.station_id,
+                    wd.liters,
+                    wd.flow_l_min,
+                    wd.photo_path,
+                    wd.photo_paths,
+                    wd.note,
+                    wd.ai_vehicle_analysis,
+                    c.id AS company_id,
+                    c.name AS company_name,
+                    c.code AS company_code,
+                    wd.pin_user_id, p.name AS driver_name, wd.access_method
+                FROM public.water_dispatch wd
+                LEFT JOIN public.company c
+                    ON c.id = wd.company_id
+                LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
+                {where_sql}
+                ORDER BY wd.ts DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            )
 
             rows = await cur.fetchall()
 
@@ -488,7 +491,10 @@ async def recent(limit: int = 20, station_id: Optional[str] = None):
 # DISPATCH DETAIL
 # =========================
 @router.get("/dispatch/{dispatch_id}")
-async def get_dispatch(dispatch_id: int):
+async def get_dispatch(
+    dispatch_id: int,
+    user: CurrentUser = Depends(get_current_user),
+):
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -526,6 +532,8 @@ async def get_dispatch(dispatch_id: int):
     if not r:
         raise HTTPException(status_code=404, detail="dispatch not found")
 
+    await require_station_access(user, str(r[2]))
+
     photo_path = r[6]
     photo_paths = _normalize_photo_paths(r[7], fallback_photo=photo_path)
 
@@ -559,7 +567,11 @@ async def get_dispatch(dispatch_id: int):
 # ADMIN DISPATCH CRUD
 # =========================
 @router.post("/dispatch/admin")
-async def create_dispatch_admin(body: AdminDispatchCreate, _user: CurrentUser = Depends(require_operator)):
+async def create_dispatch_admin(
+    body: AdminDispatchCreate,
+    user: CurrentUser = Depends(get_current_user),
+):
+    await require_station_access(user, body.station_id, {"owner", "admin", "operator"})
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -603,7 +615,36 @@ async def create_dispatch_admin(body: AdminDispatchCreate, _user: CurrentUser = 
 
 
 @router.patch("/dispatch/{dispatch_id}")
-async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch, _user: CurrentUser = Depends(require_operator)):
+async def update_dispatch_admin(
+    dispatch_id: int,
+    body: AdminDispatchPatch,
+    user: CurrentUser = Depends(get_current_user),
+):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT station_id FROM public.water_dispatch WHERE id=%s",
+                (dispatch_id,),
+            )
+            current = await cur.fetchone()
+
+    if not current:
+        raise HTTPException(status_code=404, detail="dispatch not found")
+
+    current_station_id = str(current[0])
+    await require_station_access(
+        user,
+        current_station_id,
+        {"owner", "admin", "operator"},
+    )
+
+    if body.station_id is not None and body.station_id != current_station_id:
+        await require_station_access(
+            user,
+            body.station_id,
+            {"owner", "admin", "operator"},
+        )
+
     updates = []
     params = []
 
@@ -668,7 +709,27 @@ async def update_dispatch_admin(dispatch_id: int, body: AdminDispatchPatch, _use
 
 
 @router.delete("/dispatch/{dispatch_id}")
-async def delete_dispatch_admin(dispatch_id: int, _user: CurrentUser = Depends(require_admin)):
+async def delete_dispatch_admin(
+    dispatch_id: int,
+    user: CurrentUser = Depends(get_current_user),
+):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT station_id FROM public.water_dispatch WHERE id=%s",
+                (dispatch_id,),
+            )
+            current = await cur.fetchone()
+
+    if not current:
+        raise HTTPException(status_code=404, detail="dispatch not found")
+
+    await require_station_access(
+        user,
+        str(current[0]),
+        {"owner", "admin"},
+    )
+
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
