@@ -17,6 +17,7 @@ type OrgStation = {
   id: string;
   name?: string | null;
   active: boolean;
+  organization_id?: number | null;
 };
 
 type OrgAccessUser = {
@@ -59,6 +60,7 @@ export default function AccessPage() {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
   const [orgStations, setOrgStations] = useState<OrgStation[]>([]);
+  const [allStations, setAllStations] = useState<OrgStation[]>([]);
   const [orgUsers, setOrgUsers] = useState<OrgAccessUser[]>([]);
   const [stationAccess, setStationAccess] = useState<StationAccess[]>([]);
   const [orgName, setOrgName] = useState("");
@@ -77,12 +79,14 @@ export default function AccessPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, orgData] = await Promise.all([
+      const [data, orgData, stationData] = await Promise.all([
         apiJSON<{ ok: boolean; items: AccessUser[] }>("/auth/users"),
         apiJSON<{ ok: boolean; items: Organization[] }>("/organizations"),
+        apiJSON<OrgStation[]>("/stations"),
       ]);
 
       setItems(Array.isArray(data?.items) ? data.items : []);
+      setAllStations(Array.isArray(stationData) ? stationData : []);
       const orgs = Array.isArray(orgData?.items) ? orgData.items : [];
       setOrganizations(orgs);
 
@@ -172,6 +176,27 @@ export default function AccessPage() {
       setError(e?.message ?? "No se pudo actualizar la organización");
     } finally {
       setOrgSaving(false);
+    }
+  }
+
+  async function assignStationOrganization(stationId: string, organizationId: number) {
+    setSavingId("station-org:" + stationId);
+    setError(null);
+
+    try {
+      await apiJSON("/stations/" + encodeURIComponent(stationId), {
+        method: "PATCH",
+        body: JSON.stringify({ organization_id: organizationId }),
+      });
+
+      await load();
+      if (selectedOrgId) {
+        await loadOrganizationAccess(selectedOrgId);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo asignar la estación a la organización");
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -461,6 +486,55 @@ export default function AccessPage() {
               </button>
             </div>
           )}
+        </div>
+
+        <div>
+          <h2 className="text-lg font-semibold">Asignación de cargaderos</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            Definí qué organización administra cada estación.
+          </p>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-sm min-w-[620px]">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="text-left font-medium px-4 py-3">Estación</th>
+                <th className="text-left font-medium px-4 py-3">Organización administradora</th>
+                <th className="text-left font-medium px-4 py-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {allStations.map((station) => (
+                <tr key={station.id}>
+                  <td className="px-4 py-3 font-medium">{station.name || station.id}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      className="select min-w-[220px]"
+                      value={station.organization_id ?? ""}
+                      disabled={savingId === "station-org:" + station.id}
+                      onChange={(e) => {
+                        const orgId = Number(e.target.value);
+                        if (orgId) assignStationOrganization(station.id, orgId);
+                      }}
+                    >
+                      <option value="">Sin organización</option>
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge color={station.active ? "green" : "red"}>
+                      {station.active ? "Activa" : "Inactiva"}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
 
         <div>
