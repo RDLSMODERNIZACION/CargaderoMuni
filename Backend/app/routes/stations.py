@@ -27,7 +27,6 @@ class StationIn(BaseModel):
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
     organization_id: Optional[int] = None
-    organization_id: Optional[int] = None
 
 
 class StationOut(BaseModel):
@@ -37,6 +36,7 @@ class StationOut(BaseModel):
     device_ip: Optional[str] = None
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
+    organization_id: Optional[int] = None
 
 
 class StationActivePatch(BaseModel):
@@ -49,6 +49,7 @@ class StationPatch(BaseModel):
     device_ip: Optional[str] = None
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
+    organization_id: Optional[int] = None
 
 
 # --------- Helpers ---------
