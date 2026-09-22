@@ -45,11 +45,24 @@ async def load_inventory(cur, station_id):
     await cur.execute("SELECT 1 FROM public.station WHERE id=%s AND active", (station_id,))
     if not await cur.fetchone():
         raise HTTPException(404, "Station not found or inactive")
-    await cur.execute("""SELECT code,name,pin,active FROM public.company
-        WHERE NULLIF(trim(code),'') IS NOT NULL AND NULLIF(pin,'') IS NOT NULL ORDER BY code""")
+    await cur.execute("""SELECT c.code,c.name,c.pin,c.active
+        FROM public.company c
+        JOIN public.station_company_access sca
+          ON sca.company_id=c.id
+         AND sca.station_id=%s
+         AND sca.active
+        WHERE NULLIF(trim(c.code),'') IS NOT NULL
+          AND NULLIF(c.pin,'') IS NOT NULL
+        ORDER BY c.code""", (station_id,))
     companies = await cur.fetchall()
     await cur.execute("""SELECT p.id,p.name,p.enabled,p.device_employee_no,c.code,c.active
-        FROM public.pin_user p LEFT JOIN public.company c ON c.id=p.company_id ORDER BY p.id""")
+        FROM public.pin_user p
+        LEFT JOIN public.company c ON c.id=p.company_id
+        JOIN public.station_company_access sca
+          ON sca.company_id=c.id
+         AND sca.station_id=%s
+         AND sca.active
+        ORDER BY p.id""", (station_id,))
     drivers = await cur.fetchall()
     await cur.execute("""SELECT pin_user_id,value,active,station_id,valid_from,valid_until
         FROM public.access_credential WHERE kind IN ('rfid','card') ORDER BY id""")
@@ -65,6 +78,10 @@ async def resolve_driver(cur, station_id, employee_no, card_no, company_code=Non
         JOIN public.company c ON c.id=p.company_id
         JOIN public.access_credential a ON a.pin_user_id=p.id
         JOIN public.station s ON s.id=%s AND s.active
+        JOIN public.station_company_access sca
+          ON sca.station_id=s.id
+         AND sca.company_id=c.id
+         AND sca.active
         WHERE COALESCE(NULLIF(p.device_employee_no,''),'DRIVER-' || p.id::text)=%s
           AND trim(a.value)=%s AND a.kind IN ('rfid','card')
           AND p.enabled AND c.active AND a.active
