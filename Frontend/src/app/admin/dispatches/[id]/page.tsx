@@ -11,6 +11,19 @@ type VehicleAI = {
   status?: string;
   plate?: string | null;
   plate_confidence?: number;
+  plate_first_pass?: string | null;
+  plate_first_confidence?: number;
+  plate_second_pass?: string | null;
+  plate_second_confidence?: number;
+  plate_disagreement?: boolean;
+  plate_review_required?: boolean;
+  plate_characters?: Array<{
+    value: string;
+    confidence: number;
+    alternatives: string[];
+  }>;
+  plate_review_notes?: string | null;
+  analysis_version?: string;
   company_visible?: string | null;
   company_confidence?: number;
   matches_expected_company?: boolean | null;
@@ -339,6 +352,11 @@ export default function DispatchDetailPage() {
                     Confianza: {pct(ai.plate_confidence)}
                   </div>
                 )}
+                {ai.plate_review_required && (
+                  <div className="mt-2">
+                    <StatusPill ok={false}>Requiere revisión</StatusPill>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -432,8 +450,13 @@ export default function DispatchDetailPage() {
                 <div className="font-medium">{ai.model || "—"}</div>
               </div>
               <div>
-                <div className="text-xs text-slate-500">Patente</div>
+                <div className="text-xs text-slate-500">Patente final</div>
                 <div className="font-medium">{ai.plate || "—"} · {pct(ai.plate_confidence)}</div>
+                {ai.plate_review_required && (
+                  <div className="mt-2">
+                    <StatusPill ok={false}>Requiere revisión</StatusPill>
+                  </div>
+                )}
               </div>
               <div>
                 <div className="text-xs text-slate-500">Empresa visible</div>
@@ -450,6 +473,51 @@ export default function DispatchDetailPage() {
                 <StatusPill ok={ai.matches_expected_company}>{companyCheck}</StatusPill>
               </div>
             </div>
+
+            {(ai.plate_first_pass || ai.plate_second_pass) && (
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
+                  Revisión de patente
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs text-slate-500">Primera lectura</div>
+                    <div className="font-semibold tracking-wide">
+                      {ai.plate_first_pass || "—"} · {pct(ai.plate_first_confidence)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <div className="text-xs text-slate-500">Revisión de precisión</div>
+                    <div className="font-semibold tracking-wide">
+                      {ai.plate_second_pass || "—"} · {pct(ai.plate_second_confidence)}
+                    </div>
+                  </div>
+                </div>
+
+                {ai.plate_characters?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {ai.plate_characters.map((char, index) => (
+                      <div
+                        key={`${char.value}_${index}`}
+                        className="min-w-[58px] rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-center"
+                        title={
+                          char.alternatives?.length
+                            ? `Alternativas: ${char.alternatives.join(", ")}`
+                            : "Sin alternativas"
+                        }
+                      >
+                        <div className="text-base font-bold">{char.value}</div>
+                        <div className="text-[11px] text-slate-500">{pct(char.confidence)}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {ai.plate_review_notes && (
+                  <p className="mt-3 text-xs text-slate-600">{ai.plate_review_notes}</p>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="card">
