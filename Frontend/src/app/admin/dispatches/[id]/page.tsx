@@ -354,7 +354,7 @@ export default function DispatchDetailPage() {
                 )}
                 {ai.plate_review_required && (
                   <div className="mt-2">
-                    <StatusPill ok={false}>Requiere revisión</StatusPill>
+                    <StatusPill ok={false}>Revisión manual</StatusPill>
                   </div>
                 )}
               </div>
@@ -450,11 +450,11 @@ export default function DispatchDetailPage() {
                 <div className="font-medium">{ai.model || "—"}</div>
               </div>
               <div>
-                <div className="text-xs text-slate-500">Patente final</div>
+                <div className="text-xs text-slate-500">Lectura IA</div>
                 <div className="font-medium">{ai.plate || "—"} · {pct(ai.plate_confidence)}</div>
                 {ai.plate_review_required && (
                   <div className="mt-2">
-                    <StatusPill ok={false}>Requiere revisión</StatusPill>
+                    <StatusPill ok={false}>Revisión manual</StatusPill>
                   </div>
                 )}
               </div>
