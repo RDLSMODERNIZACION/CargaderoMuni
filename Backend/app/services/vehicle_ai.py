@@ -12,6 +12,7 @@ from app.db import pool
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-5.4-mini")
+OPENAI_PLATE_MODEL = os.getenv("OPENAI_PLATE_MODEL", "gpt-5.6-sol")
 
 VEHICLE_SCHEMA = {
     "type": "object",
@@ -109,9 +110,12 @@ async def _openai_json(
     *,
     schema: dict[str, Any],
     schema_name: str,
+    model: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> dict[str, Any]:
+    selected_model = model or OPENAI_VISION_MODEL
     body = {
-        "model": OPENAI_VISION_MODEL,
+        "model": selected_model,
         "input": [{"role": "user", "content": content}],
         "text": {
             "format": {
@@ -122,6 +126,8 @@ async def _openai_json(
             }
         },
     }
+    if reasoning_effort:
+        body["reasoning"] = {"effort": reasoning_effort}
 
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -199,26 +205,29 @@ async def analyze_vehicle_images(
     first_plate = _normalize_plate(analysis.get("plate"))
     analysis["plate"] = first_plate
 
-    # Segunda pasada: no vuelve a interpretar toda la escena. Se concentra solamente
-    # en la chapa y obliga al modelo a revisar caracter por caracter, que es donde
-    # suelen aparecer confusiones O/Q, B/8, I/1, G/C, D/O y S/5.
-    second_prompt = (
-        "Revisa nuevamente estas mismas fotos, pero ahora analiza EXCLUSIVAMENTE la patente del vehiculo. "
-        "Ignora empresa, modelo, logos y cualquier otro dato. "
-        "Haz una lectura caracter por caracter y una segunda comprobacion visual antes de responder. "
-        "No copies automaticamente una lectura previa ni completes caracteres por contexto. "
-        "Presta especial atencion a confusiones O/Q, B/8, I/1, G/C, D/O y S/5. "
-        "Para patente Mercosur argentina espera normalmente AA999AA; tambien puede existir formato antiguo AAA999. "
-        "Devuelve la patente normalizada sin espacios ni guiones. "
-        "En characters informa cada caracter visible, su confianza y alternativas plausibles solo cuando realmente existan. "
-        "Marca review_required si algun caracter importante sigue siendo ambiguo o si la placa no es suficientemente legible. "
-        f"Lectura preliminar de la primera pasada: {first_plate or 'sin lectura'}. "
-        "Usala solamente como referencia a verificar, no como respuesta obligatoria."
+    # Lectura de precision: usamos un modelo de mayor capacidad y dos lecturas
+    # independientes. No le mostramos la primera lectura para evitar sesgo de anclaje.
+    precision_prompt = (
+        "Analiza EXCLUSIVAMENTE la patente del vehiculo visible en estas fotos. "
+        "Ignora empresa, modelo, logos y cualquier otro texto. "
+        "Acerca visualmente la zona de la chapa y lee caracter por caracter antes de responder. "
+        "No uses contexto para completar letras: decide por la forma visible de cada caracter. "
+        "Para patente Mercosur argentina el formato es EXACTAMENTE AA999AA: "
+        "posiciones 1-2 letras, 3-5 digitos y 6-7 letras. "
+        "Tambien puede existir el formato argentino antiguo AAA999. "
+        "Presta especial atencion a O/Q/G/C, B/8, I/1, D/O y S/5. "
+        "En las posiciones de letras nunca conviertas O en 0 por formato. "
+        "Haz una comprobacion visual final de izquierda a derecha antes de responder. "
+        "Devuelve la patente sin espacios ni guiones. "
+        "Si un caracter sigue siendo realmente ambiguo, indicalo en alternatives y marca review_required. "
+        "No inventes una nota diciendo que el formato no coincide si cumple AA999AA o AAA999."
     )
 
-    second_content: list[dict[str, Any]] = [{"type": "input_text", "text": second_prompt}]
+    precision_content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": precision_prompt}
+    ]
     for url in urls[:4]:
-        second_content.append(
+        precision_content.append(
             {
                 "type": "input_image",
                 "image_url": url,
@@ -226,36 +235,95 @@ async def analyze_vehicle_images(
             }
         )
 
+    async def run_precision(schema_name: str) -> dict[str, Any]:
+        try:
+            return await _openai_json(
+                precision_content,
+                schema=PLATE_SCHEMA,
+                schema_name=schema_name,
+                model=OPENAI_PLATE_MODEL,
+                reasoning_effort="high",
+            )
+        except RuntimeError:
+            # Fallback para cuentas/API donde el modelo de precision no esté habilitado.
+            return await _openai_json(
+                precision_content,
+                schema=PLATE_SCHEMA,
+                schema_name=schema_name + "_fallback",
+                model=OPENAI_VISION_MODEL,
+            )
+
     try:
-        plate_review = await _openai_json(
-            second_content,
-            schema=PLATE_SCHEMA,
-            schema_name="vehicle_plate_precision_review",
-        )
+        plate_review_a = await run_precision("vehicle_plate_precision_a")
+        plate_review_b = await run_precision("vehicle_plate_precision_b")
     except RuntimeError as exc:
-        # Si falla la segunda pasada, conservamos el analisis original.
         analysis["plate_first_pass"] = first_plate
         analysis["plate_second_pass"] = None
         analysis["plate_review_required"] = True
         analysis["plate_review_error"] = str(exc)
         analysis["status"] = "ok"
         analysis["model"] = OPENAI_VISION_MODEL
+        analysis["plate_model"] = OPENAI_PLATE_MODEL
         analysis["photo_count"] = len(urls[:4])
         return analysis
 
-    second_plate = _normalize_plate(plate_review.get("plate"))
-    second_conf = float(plate_review.get("plate_confidence") or 0)
-    first_conf = float(analysis.get("plate_confidence") or 0)
+    plate_a = _normalize_plate(plate_review_a.get("plate"))
+    plate_b = _normalize_plate(plate_review_b.get("plate"))
+    conf_a = float(plate_review_a.get("plate_confidence") or 0)
+    conf_b = float(plate_review_b.get("plate_confidence") or 0)
 
+    # Si las dos lecturas especializadas coinciden, esa es la lectura de precision.
+    # Si discrepan, hacemos una tercera lectura que arbitra mirando nuevamente la imagen.
+    if plate_a and plate_a == plate_b and _looks_like_argentine_plate(plate_a):
+        plate_review = plate_review_a if conf_a >= conf_b else plate_review_b
+        second_plate = plate_a
+        second_conf = (conf_a + conf_b) / 2
+        precision_consensus = True
+        precision_votes = [plate_a, plate_b]
+    else:
+        tiebreak_prompt = (
+            precision_prompt
+            + f" Dos lecturas independientes discreparon: A={plate_a or 'null'} y B={plate_b or 'null'}. "
+            "No elijas por confianza ni por mayoria: vuelve a mirar la chapa y decide visualmente cual lectura "
+            "es correcta o devuelve una tercera lectura si ninguna coincide."
+        )
+        tiebreak_content: list[dict[str, Any]] = [
+            {"type": "input_text", "text": tiebreak_prompt}
+        ]
+        for url in urls[:4]:
+            tiebreak_content.append(
+                {
+                    "type": "input_image",
+                    "image_url": url,
+                    "detail": "high",
+                }
+            )
+        try:
+            plate_review = await _openai_json(
+                tiebreak_content,
+                schema=PLATE_SCHEMA,
+                schema_name="vehicle_plate_precision_tiebreak",
+                model=OPENAI_PLATE_MODEL,
+                reasoning_effort="high",
+            )
+        except RuntimeError:
+            plate_review = plate_review_a if conf_a >= conf_b else plate_review_b
+
+        second_plate = _normalize_plate(plate_review.get("plate"))
+        second_conf = float(plate_review.get("plate_confidence") or 0)
+        precision_votes = [plate_a, plate_b, second_plate]
+        precision_consensus = bool(
+            second_plate
+            and _looks_like_argentine_plate(second_plate)
+            and (second_plate == plate_a or second_plate == plate_b)
+        )
+
+    first_conf = float(analysis.get("plate_confidence") or 0)
     first_valid = _looks_like_argentine_plate(first_plate)
     second_valid = _looks_like_argentine_plate(second_plate)
     disagreement = bool(first_plate and second_plate and first_plate != second_plate)
 
-    # La segunda pasada fue diseñada especificamente para chapa y es la lectura
-    # deliberadamente revisada caracter por caracter. Si devuelve un formato argentino
-    # valido, se toma como resultado final aunque su confianza sea menor que la primera.
-    # La ambigüedad no se resuelve volviendo a la primera lectura: se conserva la segunda
-    # y se refleja con plate_review_required para revision manual.
+    # La lectura especializada manda sobre la lectura general cuando tiene formato válido.
     if second_plate and second_valid:
         final_plate = second_plate
         final_conf = second_conf
@@ -270,7 +338,7 @@ async def analyze_vehicle_images(
         final_conf = first_conf
 
     review_required = bool(plate_review.get("review_required"))
-    if disagreement and max(first_conf, second_conf) < 0.90:
+    if not precision_consensus:
         review_required = True
     if final_plate and not _looks_like_argentine_plate(final_plate):
         review_required = True
@@ -285,10 +353,13 @@ async def analyze_vehicle_images(
     analysis["plate_review_required"] = review_required
     analysis["plate_characters"] = plate_review.get("characters", [])
     analysis["plate_review_notes"] = plate_review.get("notes")
+    analysis["plate_precision_votes"] = precision_votes
+    analysis["plate_precision_consensus"] = precision_consensus
     analysis["status"] = "ok"
     analysis["model"] = OPENAI_VISION_MODEL
+    analysis["plate_model"] = OPENAI_PLATE_MODEL
     analysis["photo_count"] = len(urls[:4])
-    analysis["analysis_version"] = "plate_precision_v2_1"
+    analysis["analysis_version"] = "plate_precision_v3_sol_consensus"
     return analysis
 
 
