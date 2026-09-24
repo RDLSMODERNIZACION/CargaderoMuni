@@ -251,17 +251,23 @@ async def analyze_vehicle_images(
     second_valid = _looks_like_argentine_plate(second_plate)
     disagreement = bool(first_plate and second_plate and first_plate != second_plate)
 
-    # La segunda pasada fue diseñada especificamente para chapa, por eso se prioriza
-    # cuando devuelve un formato valido y una confianza razonable.
-    if second_plate and second_valid and second_conf >= 0.65:
+    # La segunda pasada fue diseñada especificamente para chapa y es la lectura
+    # deliberadamente revisada caracter por caracter. Si devuelve un formato argentino
+    # valido, se toma como resultado final aunque su confianza sea menor que la primera.
+    # La ambigüedad no se resuelve volviendo a la primera lectura: se conserva la segunda
+    # y se refleja con plate_review_required para revision manual.
+    if second_plate and second_valid:
         final_plate = second_plate
         final_conf = second_conf
-    elif first_plate:
+    elif first_plate and first_valid:
         final_plate = first_plate
         final_conf = first_conf
-    else:
+    elif second_plate:
         final_plate = second_plate
         final_conf = second_conf
+    else:
+        final_plate = first_plate
+        final_conf = first_conf
 
     review_required = bool(plate_review.get("review_required"))
     if disagreement and max(first_conf, second_conf) < 0.90:
@@ -282,7 +288,7 @@ async def analyze_vehicle_images(
     analysis["status"] = "ok"
     analysis["model"] = OPENAI_VISION_MODEL
     analysis["photo_count"] = len(urls[:4])
-    analysis["analysis_version"] = "plate_precision_v2"
+    analysis["analysis_version"] = "plate_precision_v2_1"
     return analysis
 
 
