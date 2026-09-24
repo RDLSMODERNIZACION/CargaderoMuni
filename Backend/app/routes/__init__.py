@@ -11,10 +11,12 @@ from app.routes.stations import router as stations_router
 from app.routes.system_health import router as system_health_router
 from app.routes.wallet import router as wallet_router
 from app.routes.water import router as water_router
+from app.routes.offline_dispatch import router as offline_dispatch_router
 from app.routes.vehicle_ai import router as vehicle_ai_router
 
 
 api_router = APIRouter()
+api_router.include_router(offline_dispatch_router)
 
 
 # Login / permisos

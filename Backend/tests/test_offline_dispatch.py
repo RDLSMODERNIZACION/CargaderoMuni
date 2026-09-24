@@ -1,0 +1,95 @@
+import os
+os.environ.setdefault('DATABASE_URL','postgresql://test:test@localhost/test')
+from datetime import datetime,timezone,timedelta
+from uuid import uuid4
+import json,hashlib
+import pytest
+from fastapi import FastAPI,HTTPException
+from fastapi.testclient import TestClient
+from app.routes import offline_dispatch as off
+
+
+def body():
+    return dict(local_id=str(uuid4()),station_id='2',revision=1,started_at='2026-09-24T12:00:00Z',ended_at='2026-09-24T12:01:00Z',access_method='manual',liters=600,flow_l_min=600,meter_method='time_estimate',photos=[])
+
+
+def old_row(r,revision=None):
+    return (5,r.station_id,revision or r.revision,dict(digest=off.digest(r),photos=[]),r.liters,r.ended_at,r.started_at,[])
+
+
+def test_revision_guards_duplicate_stale_and_conflicting_receipts():
+    r=off.Receipt(**body());old=old_row(r)
+    assert off.check_revision(old,r,off.digest(r))
+    assert off.check_revision(old_row(r,3),r,off.digest(r))
+    with pytest.raises(HTTPException):off.check_revision(old,r,'different')
+    higher=r.model_copy(update={'revision':2,'liters':100})
+    with pytest.raises(HTTPException):off.check_revision(old,higher,off.digest(higher))
+    reopened=r.model_copy(update={'revision':2,'ended_at':None})
+    with pytest.raises(HTTPException):off.check_revision(old,reopened,off.digest(reopened))
+    photo=r.model_copy(update={'revision':2,'review_reasons':['foto_no_disponible']})
+    assert off.check_revision(old,photo,off.digest(photo)) is False
+
+
+@pytest.mark.parametrize('patch',[{'liters':-1},{'liters':float('nan')},{'started_at':'2026-09-24T12:00:00'},{'ended_at':'2026-09-24T11:00:00Z'},{'started_at':(datetime.now(timezone.utc)+timedelta(days=2)).isoformat()}])
+def test_rejects_bad_measurement_or_time(patch):
+    with pytest.raises(ValueError):off.Receipt(**(body()|patch))
+
+
+class Cursor:
+    def __init__(self,old=None):self.old=old;self.sql='';self.params=None;self.inserts=[]
+    async def __aenter__(self):return self
+    async def __aexit__(self,*args):pass
+    async def execute(self,sql,params=None):
+        self.sql,self.params=sql,params
+        if 'INSERT INTO public.water_dispatch' in sql:self.inserts.append(params)
+    async def fetchone(self):
+        if 'WHERE offline_id=' in self.sql:return self.old
+        if 'SELECT active FROM public.station' in self.sql:return (True,)
+        if 'INSERT INTO' in self.sql:return (77,)
+        return None
+    async def fetchall(self):return []
+class Pool:
+    def __init__(self,c):self.c=c
+    def connection(self):return self
+    async def __aenter__(self):return self
+    async def __aexit__(self,*args):pass
+    def cursor(self):return self.c
+
+def client(monkeypatch,cursor):
+    monkeypatch.setattr(off,'pool',Pool(cursor));app=FastAPI();app.include_router(off.router);return TestClient(app)
+
+
+def test_receipt_preserves_original_time_and_duplicate_never_inserts(monkeypatch):
+    b=body();c=Cursor();cli=client(monkeypatch,c)
+    r=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert r.status_code==200,r.text
+    assert r.json()['local_id']==b['local_id'];assert len(c.inserts)==1
+    assert c.inserts[0][4]==datetime(2026,9,24,12,tzinfo=timezone.utc)
+    assert c.inserts[0][6]==600
+    c.old=old_row(off.Receipt(**b));c.inserts=[]
+    r=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert r.status_code==200;assert not c.inserts
+
+
+def test_unknown_historical_driver_is_preserved_for_review(monkeypatch):
+    b=body()|dict(access_method='rfid',employee_no='DRIVER-2',card_no='0310250706',company_code='3',pin_user_id=2)
+    c=Cursor();r=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert r.status_code==200,r.text
+    meta=c.inserts[0][2].obj
+    assert 'camionero_no_resuelto_o_empresa_distinta' in meta['review_reasons']
+    assert 'card_no' not in meta
+    assert c.inserts[0][8] is None and c.inserts[0][9] is None
+
+
+def test_photo_hash_mismatch_never_inserts(monkeypatch):
+    b=body()|dict(photos=[dict(sha='a'*64,mime='image/jpeg')]);c=Cursor()
+    r=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b)),'photo_'+'a'*64:('x.jpg',b'\xff\xd8\xff'+b'x'*1200,'image/jpeg')})
+    assert r.status_code==422;assert not c.inserts
+
+
+def test_storage_failure_never_acknowledges_or_inserts(monkeypatch):
+    image=b'\xff\xd8\xff'+b'x'*1200;sha=hashlib.sha256(image).hexdigest();b=body()|dict(photos=[dict(sha=sha,mime='image/jpeg')]);c=Cursor()
+    async def fail(**kw):raise HTTPException(502,'Storage offline')
+    monkeypatch.setattr(off,'_upload_bytes_to_supabase',fail)
+    r=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b)),'photo_'+sha:('x.jpg',image,'image/jpeg')})
+    assert r.status_code==502;assert not c.inserts
