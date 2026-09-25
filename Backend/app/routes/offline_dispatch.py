@@ -53,8 +53,12 @@ class Receipt(BaseModel):
             raise ValueError('Registro anterior sin volumen')
         if self.meter_method == 'timestamps' and (self.liters is not None or self.flow_l_min is not None):
             raise ValueError('El registro de horarios no debe enviar litros ni caudal')
-        if self.pump_started_at and (self.pump_started_at < self.started_at or (self.ended_at and self.pump_started_at > self.ended_at)):
-            raise ValueError('Inicio de bomba fuera del intervalo')
+        if self.pump_started_at:
+            # Recorder 1.1.0 read the pump clock before creating a manual receipt.
+            # Keep both original timestamps (and digest) for its small creation delay.
+            creation_tolerance = timedelta(milliseconds=100) if self.meter_method == 'timestamps' else timedelta(0)
+            if self.pump_started_at < self.started_at - creation_tolerance or (self.ended_at and self.pump_started_at > self.ended_at):
+                raise ValueError('Inicio de bomba fuera del intervalo')
         if any(len(x)>200 for x in self.review_reasons):
             raise ValueError('Motivo de revisión demasiado largo')
         if len({p.sha for p in self.photos})!=len(self.photos):

@@ -151,3 +151,19 @@ def test_station_flow_does_not_convert_interrupted_or_open_load(monkeypatch):
         res=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
         assert res.status_code==200,res.text
         assert c.inserts[-1][6] is None
+
+
+def test_recorder_creation_delay_preserves_original_times_and_syncs(monkeypatch):
+    b=timestamps()|dict(started_at='2026-09-25T00:38:26.703Z',pump_started_at='2026-09-25T00:38:26.701Z',ended_at='2026-09-25T00:38:51.155Z')
+    r=off.Receipt(**b)
+    assert (r.started_at-r.pump_started_at).total_seconds()==0.002
+    c=Cursor();res=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    assert c.inserts[-1][4]==r.started_at
+    assert c.inserts[-1][2].obj['pump_started_at']==r.pump_started_at.isoformat().replace('+00:00','Z')
+
+@pytest.mark.parametrize('milliseconds',[101,1000,60000])
+def test_creation_tolerance_does_not_hide_invalid_clock(milliseconds):
+    b=timestamps();start=datetime.fromisoformat(b['started_at'].replace('Z','+00:00'))
+    b['pump_started_at']=(start-timedelta(milliseconds=milliseconds)).isoformat()
+    with pytest.raises(ValueError):off.Receipt(**b)

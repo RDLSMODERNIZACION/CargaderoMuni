@@ -30,8 +30,8 @@ class Store {
   });
   this.set('roster',{received_ms:this.now(),generated_at:p.generated_at,items});return items.length;
  }
- create(identity={},reasons=[]){
-  const a={local_id:randomUUID(),station_id:this.station,started_at:new Date(this.now()).toISOString(),ended_at:null,employee_no:identity.employee_no||'',card_no:identity.card_no||'',company_code:identity.company_code||'',pin_user_id:identity.pin_user_id||null,access_method:identity.access_method||'manual',roster_generated_at:identity.roster_generated_at||null,liters:0,flow_l_min:this.flowLpm,meter_method:'timestamps',pump_started_at:null,review_reasons:reasons,last_sample_ms:null,last_on:false,has_run:false,revision:0};
+ create(identity={},reasons=[],createdMs=this.now()){
+  const a={local_id:randomUUID(),station_id:this.station,started_at:new Date(createdMs).toISOString(),ended_at:null,employee_no:identity.employee_no||'',card_no:identity.card_no||'',company_code:identity.company_code||'',pin_user_id:identity.pin_user_id||null,access_method:identity.access_method||'manual',roster_generated_at:identity.roster_generated_at||null,liters:0,flow_l_min:this.flowLpm,meter_method:'timestamps',pump_started_at:null,review_reasons:reasons,last_sample_ms:null,last_on:false,has_run:false,revision:0};
   this.save(a);this.set('active',a.local_id);return a;
  }
  access(e,eventTime=''){
@@ -58,14 +58,14 @@ class Store {
     if(a.access_method==='manual'&&now-Date.parse(a.started_at)<10000){Object.assign(a,identity);a.review_reasons=[...new Set([...a.review_reasons,...reasons])];this.save(a);return {load:a,capture:false};}
     return null;
    }
-   a=this.create(identity,reasons);return {load:a,capture:true};
+   a=this.create(identity,reasons,now);return {load:a,capture:true};
   })();
  }
  meter(on){
   if(typeof on!=='boolean')throw Error('Estado de bomba inválido');
   return this.db.transaction(()=>{
    const now=this.now();let a=this.active(),capture=false;
-   if(!a&&on){a=this.create();capture=true;}if(!a)return null;
+   if(!a&&on){a=this.create({},[],now);capture=true;}if(!a)return null;
    if(a.last_on&&a.last_sample_ms!==null){const dt=now-a.last_sample_ms;if(dt>=0&&dt<=this.gap){if(a.meter_method==='time_estimate')a.liters+=dt/60000*a.flow_l_min;}else a.review_reasons=[...new Set([...a.review_reasons,'intervalo_sin_medicion'])];}
    a.last_sample_ms=now;a.last_on=on;
    if(on){if(!a.has_run&&a.meter_method==='timestamps')a.pump_started_at=new Date(now).toISOString();a.has_run=true;}
