@@ -93,3 +93,31 @@ def test_storage_failure_never_acknowledges_or_inserts(monkeypatch):
     monkeypatch.setattr(off,'_upload_bytes_to_supabase',fail)
     r=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b)),'photo_'+sha:('x.jpg',image,'image/jpeg')})
     assert r.status_code==502;assert not c.inserts
+
+def timestamps():
+    b=body();b.pop('liters');b.pop('flow_l_min')
+    return b|dict(meter_method='timestamps',pump_started_at='2026-09-24T12:00:10Z')
+
+def test_timestamps_without_volume_and_late_photo_preserves_conversion(monkeypatch):
+    b=timestamps();c=Cursor();cli=client(monkeypatch,c)
+    res=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    assert c.inserts[0][6:8] == (None,None)
+    receipt=off.Receipt(**b);meta=receipt.model_dump(mode='json')
+    meta.update(digest=off.digest(receipt),volume_calculation={'flow_l_min':120,'liters':100})
+    c.old=(77,'2',1,meta,100,receipt.ended_at,receipt.started_at,[])
+    b['revision']=2
+    res=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    assert c.inserts[-1][6:8] == (100,120)
+    assert c.inserts[-1][2].obj['volume_calculation']['liters']==100
+
+def test_pump_time_is_immutable_after_recorded():
+    r=off.Receipt(**timestamps());meta=r.model_dump(mode='json');meta['digest']=off.digest(r)
+    old=(77,'2',1,meta,None,r.ended_at,r.started_at,[])
+    altered=r.model_copy(update={'revision':2,'pump_started_at':r.started_at})
+    with pytest.raises(HTTPException):off.check_revision(old,altered,off.digest(altered))
+
+@pytest.mark.parametrize('patch',[{'liters':0},{'pump_started_at':'2026-09-24T11:59:59Z'},{'pump_started_at':'2026-09-24T12:01:01Z'}])
+def test_invalid_timestamps(patch):
+    with pytest.raises(ValueError):off.Receipt(**(timestamps()|patch))

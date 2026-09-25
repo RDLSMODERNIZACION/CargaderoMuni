@@ -31,7 +31,7 @@ class Store {
   this.set('roster',{received_ms:this.now(),generated_at:p.generated_at,items});return items.length;
  }
  create(identity={},reasons=[]){
-  const a={local_id:randomUUID(),station_id:this.station,started_at:new Date(this.now()).toISOString(),ended_at:null,employee_no:identity.employee_no||'',card_no:identity.card_no||'',company_code:identity.company_code||'',pin_user_id:identity.pin_user_id||null,access_method:identity.access_method||'manual',roster_generated_at:identity.roster_generated_at||null,liters:0,flow_l_min:this.flowLpm,meter_method:'time_estimate',review_reasons:reasons,last_sample_ms:null,last_on:false,has_run:false,revision:0};
+  const a={local_id:randomUUID(),station_id:this.station,started_at:new Date(this.now()).toISOString(),ended_at:null,employee_no:identity.employee_no||'',card_no:identity.card_no||'',company_code:identity.company_code||'',pin_user_id:identity.pin_user_id||null,access_method:identity.access_method||'manual',roster_generated_at:identity.roster_generated_at||null,liters:0,flow_l_min:this.flowLpm,meter_method:'timestamps',pump_started_at:null,review_reasons:reasons,last_sample_ms:null,last_on:false,has_run:false,revision:0};
   this.save(a);this.set('active',a.local_id);return a;
  }
  access(e,eventTime=''){
@@ -66,9 +66,9 @@ class Store {
   return this.db.transaction(()=>{
    const now=this.now();let a=this.active(),capture=false;
    if(!a&&on){a=this.create();capture=true;}if(!a)return null;
-   if(a.last_on&&a.last_sample_ms!==null){const dt=now-a.last_sample_ms;if(dt>=0&&dt<=this.gap)a.liters+=dt/60000*a.flow_l_min;else a.review_reasons=[...new Set([...a.review_reasons,'intervalo_sin_medicion'])];}
+   if(a.last_on&&a.last_sample_ms!==null){const dt=now-a.last_sample_ms;if(dt>=0&&dt<=this.gap){if(a.meter_method==='time_estimate')a.liters+=dt/60000*a.flow_l_min;}else a.review_reasons=[...new Set([...a.review_reasons,'intervalo_sin_medicion'])];}
    a.last_sample_ms=now;a.last_on=on;
-   if(on)a.has_run=true;
+   if(on){if(!a.has_run&&a.meter_method==='timestamps')a.pump_started_at=new Date(now).toISOString();a.has_run=true;}
    if(!on&&a.has_run){a.ended_at=new Date(now).toISOString();this.set('active',null);}
    this.save(a);return {load:a,capture};
   })();
@@ -88,7 +88,7 @@ class Store {
  }
  photoFailure(id){const a=this.read(id);if(a&&!a.review_reasons.includes('foto_no_disponible')){a.review_reasons.push('foto_no_disponible');this.save(a);}}
  pending(){return this.db.prepare('SELECT id,revision FROM loads WHERE revision>acked AND last_attempt<=? ORDER BY last_attempt,id LIMIT 20').all(this.now()-15000);}
- snapshot(id){const a=this.read(id);if(!a)return null;const photos=this.db.prepare('SELECT sha,mime,file FROM photos WHERE load_id=? ORDER BY sha').all(id);const {last_on,last_sample_ms,has_run,...body}=a;body.photos=photos.map(({sha,mime})=>({sha,mime}));return {body,photos};}
+ snapshot(id){const a=this.read(id);if(!a)return null;const photos=this.db.prepare('SELECT sha,mime,file FROM photos WHERE load_id=? ORDER BY sha').all(id);const {last_on,last_sample_ms,has_run,...body}=a;if(body.meter_method==='timestamps'){delete body.liters;delete body.flow_l_min;}body.photos=photos.map(({sha,mime})=>({sha,mime}));return {body,photos};}
  attempt(id,error=null){this.db.prepare('UPDATE loads SET last_attempt=?,last_error=? WHERE id=?').run(this.now(),error,id);}
  ack(id,revision){this.db.prepare('UPDATE loads SET acked=MAX(acked,?),last_error=NULL WHERE id=? AND revision>=?').run(revision,id,revision);}
  status(){return this.db.prepare('SELECT count(*) AS total,sum(CASE WHEN revision>acked THEN 1 ELSE 0 END) AS pending FROM loads').get();}

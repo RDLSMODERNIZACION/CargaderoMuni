@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any
 
 import httpx
@@ -458,7 +458,7 @@ async def recent(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                    wd.pin_user_id, p.name AS driver_name, wd.access_method
+                    wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c
                     ON c.id = wd.company_id
@@ -493,6 +493,8 @@ async def recent(
                 "company_name": r[10],
                 "company_code": r[11],
                 "pin_user_id": r[12], "driver_name": r[13], "access_method": r[14],
+                "ended_at": r[15].isoformat() if r[15] else None,
+                "timing": dispatch_timing(r[16]),
             }
         )
 
@@ -533,7 +535,7 @@ async def get_dispatch(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                        wd.pin_user_id, p.name AS driver_name, wd.access_method
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c ON c.id = wd.company_id
                     LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
@@ -574,6 +576,8 @@ async def get_dispatch(
             "company_name": r[16],
             "company_code": r[17],
             "pin_user_id": r[18], "driver_name": r[19], "access_method": r[20],
+            "ended_at": r[21].isoformat() if r[21] else None,
+            "timing": dispatch_timing(r[22]),
         },
     }
 
@@ -948,3 +952,51 @@ async def attach_photo(dispatch_id: int, request: Request, background_tasks: Bac
             "ai_vehicle_analysis": ai_analysis,
         }
     )
+
+
+def dispatch_timing(meta):
+    meta = meta or {}
+    return {key: meta.get(key) for key in
+            ('meter_method', 'pump_started_at', 'review_reasons', 'volume_calculation')}
+
+
+class TimeConversion(BaseModel):
+    flow_l_min: float = Field(gt=0, le=1e6, allow_inf_nan=False)
+
+
+@router.post('/dispatch/{dispatch_id}/convert-time')
+async def convert_dispatch_time(dispatch_id: int, body: TimeConversion,
+                                user: CurrentUser = Depends(get_current_user)):
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute('SELECT station_id FROM public.water_dispatch WHERE id=%s', (dispatch_id,))
+            station = await cur.fetchone()
+            if not station:
+                raise HTTPException(404, 'dispatch not found')
+            await require_station_access(user, str(station[0]), {'owner', 'admin', 'operator'})
+            await cur.execute('SELECT ended_at, offline_meta, debited_at FROM public.water_dispatch WHERE id=%s FOR UPDATE', (dispatch_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(404, 'dispatch not found')
+            end, meta, debited = row
+            meta = dict(meta or {})
+            if debited:
+                raise HTTPException(409, 'El despacho ya fue debitado; requiere ajuste administrativo')
+            start = meta.get('pump_started_at')
+            if meta.get('meter_method') != 'timestamps' or not start or not end:
+                raise HTTPException(409, 'Faltan inicio y fin reales de bomba para convertir')
+            if {'reinicio_durante_carga', 'intervalo_sin_medicion', 'sin_arranque_observado'} & set(meta.get('review_reasons', [])):
+                raise HTTPException(409, 'Los horarios requieren revisión por interrupciones; no se puede convertir automáticamente')
+            seconds = (end - datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds()
+            if seconds < 0:
+                raise HTTPException(409, 'Fin anterior al inicio')
+            liters = round(seconds / 60 * body.flow_l_min, 3)
+            if liters > 1e9:
+                raise HTTPException(422, 'Volumen fuera de rango')
+            calc = dict(flow_l_min=body.flow_l_min, duration_seconds=seconds, liters=liters,
+                        method='time_estimate', calculated_by=user.id,
+                        calculated_at=datetime.now(timezone.utc).isoformat())
+            meta['volume_calculation'] = calc
+            await cur.execute('UPDATE public.water_dispatch SET liters=%s, flow_l_min=%s, offline_meta=%s WHERE id=%s',
+                              (liters, body.flow_l_min, Jsonb(meta), dispatch_id))
+    return dict(ok=True, liters=liters, calculation=calc)

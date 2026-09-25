@@ -33,21 +33,28 @@ class Receipt(BaseModel):
     pin_user_id: int | None = None
     access_method: Literal['rfid', 'company_pin', 'manual']
     roster_generated_at: datetime | None = None
-    liters: float = Field(ge=0, le=1e9)
-    flow_l_min: float = Field(gt=0, le=1e6)
-    meter_method: Literal['time_estimate']
+    liters: float | None = Field(default=None, ge=0, le=1e9)
+    flow_l_min: float | None = Field(default=None, gt=0, le=1e6)
+    meter_method: Literal['time_estimate', 'timestamps']
+    pump_started_at: datetime | None = None
     review_reasons: list[str] = Field(default_factory=list, max_length=30)
     photos: list[Photo] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode='after')
     def valid_times(self):
-        for d in [self.started_at, self.ended_at, self.roster_generated_at]:
+        for d in [self.started_at, self.ended_at, self.roster_generated_at, self.pump_started_at]:
             if d and d.tzinfo is None:
                 raise ValueError('Las fechas deben incluir zona horaria')
         if self.ended_at and self.ended_at < self.started_at:
             raise ValueError('Fin anterior al inicio')
         if self.started_at > datetime.now(timezone.utc) + timedelta(minutes=5):
             raise ValueError('Reloj de la estación adelantado')
+        if self.meter_method == 'time_estimate' and (self.liters is None or self.flow_l_min is None):
+            raise ValueError('Registro anterior sin volumen')
+        if self.meter_method == 'timestamps' and (self.liters is not None or self.flow_l_min is not None):
+            raise ValueError('El registro de horarios no debe enviar litros ni caudal')
+        if self.pump_started_at and (self.pump_started_at < self.started_at or (self.ended_at and self.pump_started_at > self.ended_at)):
+            raise ValueError('Inicio de bomba fuera del intervalo')
         if any(len(x)>200 for x in self.review_reasons):
             raise ValueError('Motivo de revisión demasiado largo')
         if len({p.sha for p in self.photos})!=len(self.photos):
@@ -56,7 +63,7 @@ class Receipt(BaseModel):
 
 
 def digest(receipt):
-    return hashlib.sha256(json.dumps(receipt.model_dump(mode='json'), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(receipt.model_dump(mode='json', exclude={'pump_started_at'} if receipt.meter_method == 'time_estimate' else set()), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def check_revision(old, r, fingerprint):
@@ -71,9 +78,15 @@ def check_revision(old, r, fingerprint):
         return True
     if old[6] != r.started_at:
         raise HTTPException(409, 'No se puede cambiar el inicio de una carga')
-    if float(old[4] or 0) > r.liters:
+    if old[3].get('meter_method', 'time_estimate') != r.meter_method:
+        raise HTTPException(409, 'No se puede cambiar el método de registro')
+    prior_pump = old[3].get('pump_started_at')
+    if prior_pump and (not r.pump_started_at or datetime.fromisoformat(prior_pump.replace('Z', '+00:00')) != r.pump_started_at):
+        raise HTTPException(409, 'No se puede cambiar el inicio de bomba')
+    prior_liters = old[3].get('liters', old[4])
+    if r.meter_method == 'time_estimate' and float(prior_liters or 0) > r.liters:
         raise HTTPException(409, 'Una revisión no puede reducir litros')
-    if old[5] and (r.ended_at != old[5] or float(old[4] or 0) != r.liters):
+    if old[5] and (r.ended_at != old[5] or (r.meter_method == 'time_estimate' and float(prior_liters or 0) != r.liters)):
         raise HTTPException(409, 'Carga cerrada: solo se admiten fotos o metadatos tardíos')
     return False
 
@@ -166,7 +179,14 @@ async def sync(request: Request, background_tasks: BackgroundTasks):
             meta=r.model_dump(mode='json');meta['digest']=fingerprint;meta['review_reasons']=reasons
             # Do not retain card numbers in the remote audit metadata.
             meta.pop('card_no',None)
-            note='REGISTRO LOCAL · '+('CERRADO' if r.ended_at else 'EN CURSO')+' · litros estimados por tiempo'
+            if old and old[3].get('volume_calculation'):
+                meta['volume_calculation'] = old[3]['volume_calculation']
+            liters = r.liters
+            flow = r.flow_l_min
+            if r.meter_method == 'timestamps' and old:
+                liters = old[4]
+                flow = (meta.get('volume_calculation') or {}).get('flow_l_min')
+            note='REGISTRO LOCAL · '+('CERRADO' if r.ended_at else 'EN CURSO')+(' · pendiente de conversión en app' if r.meter_method == 'timestamps' else ' · litros estimados por tiempo')
             if reasons:note+=' · REVISAR: '+', '.join(reasons)
             await cur.execute('''INSERT INTO public.water_dispatch
                 (offline_id,offline_revision,offline_meta,station_id,ts,ended_at,liters,flow_l_min,
@@ -178,7 +198,7 @@ async def sync(request: Request, background_tasks: BackgroundTasks):
                  company_id=excluded.company_id,pin_user_id=excluded.pin_user_id,
                  access_method=excluded.access_method,photo_path=excluded.photo_path,
                  photo_paths=excluded.photo_paths,note=excluded.note RETURNING id''',
-                (r.local_id,r.revision,Jsonb(meta),r.station_id,r.started_at,r.ended_at,r.liters,r.flow_l_min,
+                (r.local_id,r.revision,Jsonb(meta),r.station_id,r.started_at,r.ended_at,liters,flow,
                  company,driver,r.access_method,urls[0] if urls else None,Jsonb(urls),note))
             dispatch_id=int((await cur.fetchone())[0])
     if urls and (not old or old[7]!=urls):background_tasks.add_task(analyze_dispatch_vehicle,dispatch_id)

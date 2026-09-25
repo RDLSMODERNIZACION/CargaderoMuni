@@ -76,3 +76,6 @@ La implementación pasó pruebas automatizadas de pérdida de respuesta, reinici
 
 `npm ci && npm test` en esta carpeta. Backend: `PYTHONPATH=Backend pytest -q Backend/tests`.
 La base conserva RLS sin modificaciones de permisos. Los avisos existentes de Supabase sobre funciones y políticas no se modifican con este cambio; referencia: https://supabase.com/docs/guides/database/database-linter.
+
+## Versión 1.1.0: horarios y conversión en la app
+Las nuevas cargas usan `meter_method: timestamps`, conservan `started_at` para el evento de acceso, agregan `pump_started_at` al primer estado de bomba encendida y cierran con `ended_at`. El envío omite `liters` y `flow_l_min`; estos valores se asignan desde el detalle del despacho en la app. No se modifica el flujo ni las IP. Actualizar con el paquete de `NodeRED/timing-update`. Los registros anteriores mantienen su contrato `time_estimate` para poder reenviarse sin cambiar su UUID/revisión. Las interrupciones se marcan para revisión y no se convierten automáticamente.

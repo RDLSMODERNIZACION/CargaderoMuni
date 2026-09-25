@@ -6,7 +6,7 @@ RED.nodes.registerType('cargadero-offline',{category:'storage',color:'#d7e6c4',d
 <div class="form-row"><label for="node-input-station">Estación</label><input id="node-input-station"></div>
 <div class="form-row"><label for="node-input-backend">Backend</label><input id="node-input-backend"></div>
 <div class="form-row"><label for="node-input-directory">Carpeta local</label><input id="node-input-directory" placeholder="Automática dentro del directorio de Node-RED"></div>
-<div class="form-row"><label for="node-input-flowLpm">Caudal L/min</label><input id="node-input-flowLpm"></div>
+<div class="form-row"><label for="node-input-flowLpm">Caudal anterior</label><input id="node-input-flowLpm"></div>
 <div class="form-row"><label for="node-input-maxRosterHours">Padrón: horas</label><input id="node-input-maxRosterHours"></div>
 </script>
-<script type="text/html" data-help-name="cargadero-offline"><p>Registra primero en SQLite y reenvía hasta recibir confirmación por UUID y revisión. Las fotos se guardan en disco. No acciona relés. El padrón se conserva 72 h como referencia vigente; accesos recibidos fuera de ese plazo también se registran, con marca de revisión. No hay borrado automático de cargas ni fotos. Una sola instancia por estación/carpeta. Node.js 22 o posterior.</p></script>
+<script type="text/html" data-help-name="cargadero-offline"><p>Las nuevas cargas envían inicio y fin reales de bomba, sin litros ni caudal. La conversión se configura desde la app. El caudal anterior solo se conserva por compatibilidad. Registra primero en SQLite y reenvía hasta recibir confirmación por UUID y revisión. Las fotos se guardan en disco. No acciona relés. El padrón se conserva 72 h como referencia vigente; accesos recibidos fuera de ese plazo también se registran, con marca de revisión. No hay borrado automático de cargas ni fotos. Una sola instancia por estación/carpeta. Node.js 22 o posterior.</p></script>

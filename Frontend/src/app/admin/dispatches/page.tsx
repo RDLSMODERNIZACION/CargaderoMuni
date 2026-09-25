@@ -22,6 +22,8 @@ type DispatchItem = {
   ts: string;
   station_id: string;
   liters: number | null;
+  ended_at?: string | null;
+  timing?: {meter_method?: string; pump_started_at?: string | null; volume_calculation?: unknown};
   photo_path?: string | null;
   photo_paths?: string[] | null;
   company_id?: number | null;
@@ -291,8 +293,8 @@ export default function DispatchesPage() {
     },
     {
       key: "liters",
-      header: "Litros",
-      render: (r: DispatchItem) => fmtLiters(r.liters ?? 0),
+      header: "Volumen",
+      render: (r: DispatchItem) => <div>{r.liters == null ? "Pendiente" : fmtLiters(r.liters)}{r.timing?.volume_calculation ? <span className="block text-xs text-slate-500">Estimado por tiempo</span> : null}</div>,
       sort: (a: DispatchItem, b: DispatchItem) => (a.liters ?? 0) - (b.liters ?? 0),
     },
     {
@@ -301,6 +303,10 @@ export default function DispatchesPage() {
       render: (r: DispatchItem) => (r.ts ? fmtDate(r.ts) : "—"),
       sort: (a: DispatchItem, b: DispatchItem) =>
         new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+    },
+    {
+      key: "duration", header: "Duración",
+      render: (r: DispatchItem) => r.timing?.pump_started_at && r.ended_at ? `${((Date.parse(r.ended_at) - Date.parse(r.timing.pump_started_at)) / 60000).toFixed(2)} min` : "—",
     },
     {
       key: "photo",
@@ -316,6 +322,7 @@ export default function DispatchesPage() {
         <button className="btn btn-secondary" aria-label={`Acciones del despacho ${r.id}`} aria-expanded={menu === r.id} onClick={() => setMenu(menu === r.id ? null : r.id)}>⋮</button>
         {menu === r.id && <div className="flex flex-col gap-1 py-2">
           <button className="text-sm underline whitespace-nowrap" onClick={() => router.push(("/admin/dispatches/" + r.id) as Route)}>Ver despacho</button>
+          {canOperate && r.timing?.meter_method === "timestamps" && <button className="text-sm underline whitespace-nowrap" onClick={() => router.push(("/admin/dispatches/" + r.id) as Route)}>Convertir tiempo a litros</button>}
           {canOperate && <button className="text-sm underline whitespace-nowrap" onClick={() => {setReview(r); setPlate(r.ai_vehicle_analysis?.plate || ""); setReviewError(""); setMenu(null);}}>Validar patente</button>}
         </div>}
       </div>,

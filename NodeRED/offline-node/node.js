@@ -5,7 +5,7 @@ module.exports=function(RED){
  function Offline(config){
   RED.nodes.createNode(this,config);const node=this,flow=node.context().flow;let store,busy=false,closing=false,inFlight=null;
   const emit=(kind,extra={})=>node.send([null,{payload:{kind,...extra}}]);
-  const state=()=>{const s=store.status(),a=store.active();flow.set('current_dispatch_id',a?.local_id||null);flow.set('dispatch_start_pending',false);node.status({fill:s.pending?'yellow':'green',shape:'dot',text:(a?'Carga local '+Math.round(a.liters)+' L · ':'')+(s.pending||0)+' pendientes'});};
+  const state=()=>{const s=store.status(),a=store.active();flow.set('current_dispatch_id',a?.local_id||null);flow.set('dispatch_start_pending',false);node.status({fill:s.pending?'yellow':'green',shape:'dot',text:(a?'Carga local en curso · ':'')+(s.pending||0)+' pendientes'});};
   try{const station=String(config.station||'2');const dir=config.directory?path.resolve(config.directory):path.join(RED.settings.userDir,'cargadero-offline','station-'+station);store=new Store(dir,station,{flowLpm:Number(config.flowLpm||600),maxRosterHours:Number(config.maxRosterHours||72)});state();}
   catch(e){node.status({fill:'red',shape:'ring',text:'No se pudo abrir registro local'});node.error(e);return;}
   const capture=r=>{if(r?.capture)node.send([{capture_id:r.load.local_id,payload:null},null]);if(r)state();};
