@@ -78,7 +78,38 @@ export default function DispatchesPage() {
   const [plate, setPlate] = useState("");
   const [savingPlate, setSavingPlate] = useState(false);
   const [reviewError, setReviewError] = useState("");
-  const [menu, setMenu] = useState<number | null>(null);
+  const [actionMenu, setActionMenu] = useState<{
+    row: DispatchItem;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  function toggleActionMenu(event: React.MouseEvent<HTMLButtonElement>, row: DispatchItem) {
+    event.stopPropagation();
+
+    if (actionMenu?.row.id === row.id) {
+      setActionMenu(null);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const menuWidth = 230;
+    const menuHeight = 150;
+    const gap = 8;
+    const viewportPadding = 12;
+
+    const left = Math.max(
+      viewportPadding,
+      Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPadding)
+    );
+
+    const fitsBelow = rect.bottom + gap + menuHeight <= window.innerHeight - viewportPadding;
+    const top = fitsBelow
+      ? rect.bottom + gap
+      : Math.max(viewportPadding, rect.top - menuHeight - gap);
+
+    setActionMenu({ row, top, left });
+  }
   const normalizedPlate = plate.toUpperCase().replace(/[\s-]/g, "");
   const validPlate = /^(?:[A-Z]{3}[0-9]{3}|[A-Z]{2}[0-9]{3}[A-Z]{2})$/.test(normalizedPlate);
   async function savePlate() {
@@ -318,14 +349,20 @@ export default function DispatchesPage() {
     },
     {
       key: "actions", header: "Acciones",
-      render: (r: DispatchItem) => <div onClick={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === "Escape") setMenu(null); }}>
-        <button className="btn btn-secondary" aria-label={`Acciones del despacho ${r.id}`} aria-expanded={menu === r.id} onClick={() => setMenu(menu === r.id ? null : r.id)}>⋮</button>
-        {menu === r.id && <div className="flex flex-col gap-1 py-2">
-          <button className="text-sm underline whitespace-nowrap" onClick={() => router.push(("/admin/dispatches/" + r.id) as Route)}>Ver despacho</button>
-          {canOperate && r.timing?.meter_method === "timestamps" && <button className="text-sm underline whitespace-nowrap" onClick={() => router.push(("/admin/dispatches/" + r.id) as Route)}>Convertir tiempo a litros</button>}
-          {canOperate && <button className="text-sm underline whitespace-nowrap" onClick={() => {setReview(r); setPlate(r.ai_vehicle_analysis?.plate || ""); setReviewError(""); setMenu(null);}}>Validar patente</button>}
-        </div>}
-      </div>,
+      render: (r: DispatchItem) => (
+        <div onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="btn btn-secondary h-10 w-10 p-0 justify-center rounded-xl text-xl leading-none"
+            aria-label={`Acciones del despacho ${r.id}`}
+            aria-haspopup="menu"
+            aria-expanded={actionMenu?.row.id === r.id}
+            onClick={(event) => toggleActionMenu(event, r)}
+          >
+            ⋮
+          </button>
+        </div>
+      ),
     },
   ];
 
@@ -427,6 +464,69 @@ export default function DispatchesPage() {
           />
         )}
       </section>
+
+      {actionMenu && (
+        <>
+          <button
+            type="button"
+            aria-label="Cerrar menú de acciones"
+            className="fixed inset-0 z-40 cursor-default bg-transparent"
+            onClick={() => setActionMenu(null)}
+          />
+          <div
+            role="menu"
+            aria-label={`Acciones del despacho ${actionMenu.row.id}`}
+            className="fixed z-50 w-[230px] overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+            style={{ top: actionMenu.top, left: actionMenu.left }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
+              onClick={() => {
+                const id = actionMenu.row.id;
+                setActionMenu(null);
+                router.push(("/admin/dispatches/" + id) as Route);
+              }}
+            >
+              Ver despacho
+            </button>
+
+            {canOperate && actionMenu.row.timing?.meter_method === "timestamps" && (
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
+                onClick={() => {
+                  const id = actionMenu.row.id;
+                  setActionMenu(null);
+                  router.push(("/admin/dispatches/" + id) as Route);
+                }}
+              >
+                Convertir tiempo a litros
+              </button>
+            )}
+
+            {canOperate && (
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
+                onClick={() => {
+                  const row = actionMenu.row;
+                  setReview(row);
+                  setPlate(row.ai_vehicle_analysis?.plate || "");
+                  setReviewError("");
+                  setActionMenu(null);
+                }}
+              >
+                Validar patente
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {review && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onKeyDown={e => {if (e.key === "Escape" && !savingPlate) setReview(null);}}>
