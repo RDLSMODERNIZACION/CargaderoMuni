@@ -27,6 +27,7 @@ class StationIn(BaseModel):
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
     organization_id: Optional[int] = None
+    flow_l_min: Optional[float] = Field(default=None, gt=0, le=1e6, allow_inf_nan=False)
 
 
 class StationOut(BaseModel):
@@ -37,6 +38,7 @@ class StationOut(BaseModel):
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
     organization_id: Optional[int] = None
+    flow_l_min: Optional[float] = Field(default=None, gt=0, le=1e6, allow_inf_nan=False)
 
 
 class StationActivePatch(BaseModel):
@@ -54,6 +56,7 @@ class StationPatch(BaseModel):
     device_model: Optional[str] = None
     device_serial: Optional[str] = None
     organization_id: Optional[int] = None
+    flow_l_min: Optional[float] = Field(default=None, gt=0, le=1e6, allow_inf_nan=False)
 
 
 # --------- Helpers ---------
@@ -66,6 +69,7 @@ def _row_to_out(row) -> StationOut:
         device_model=row[4],
         device_serial=row[5],
         organization_id=row[6],
+        flow_l_min=row[7],
     )
 
 
@@ -78,7 +82,7 @@ async def list_stations(user: CurrentUser = Depends(get_current_user)):
         async with conn.cursor() as cur:
             if allowed is None:
                 await cur.execute(
-                    "SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station ORDER BY id;"
+                    "SELECT id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min FROM public.station ORDER BY id;"
                 )
             elif not allowed:
                 rows = []
@@ -86,7 +90,7 @@ async def list_stations(user: CurrentUser = Depends(get_current_user)):
             else:
                 await cur.execute(
                     """
-                    SELECT id, name, active, device_ip, device_model, device_serial, organization_id
+                    SELECT id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min
                     FROM public.station
                     WHERE id = ANY(%s)
                     ORDER BY id
@@ -108,7 +112,7 @@ async def get_station(
     async with get_conn() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT id, name, active, device_ip, device_model, device_serial, organization_id FROM public.station WHERE id = %s;",
+                "SELECT id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min FROM public.station WHERE id = %s;",
                 (station_id,),
             )
             row = await cur.fetchone()
@@ -132,10 +136,10 @@ async def upsert_station(s: StationIn, user: CurrentUser = Depends(get_current_u
                 await cur.execute(
                     """
                     INSERT INTO public.station
-                        (id, name, active, device_ip, device_model, device_serial, organization_id)
+                        (id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min)
                     VALUES (
                         %s, %s, %s, %s, %s, %s,
-                        COALESCE(%s, (SELECT id FROM public.organization ORDER BY id LIMIT 1))
+                        COALESCE(%s, (SELECT id FROM public.organization ORDER BY id LIMIT 1)), %s
                     )
                     ON CONFLICT (id) DO UPDATE
                         SET name = EXCLUDED.name,
@@ -143,10 +147,11 @@ async def upsert_station(s: StationIn, user: CurrentUser = Depends(get_current_u
                             device_ip = EXCLUDED.device_ip,
                             device_model = EXCLUDED.device_model,
                             device_serial = EXCLUDED.device_serial,
-                            organization_id = COALESCE(EXCLUDED.organization_id, public.station.organization_id)
-                    RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
+                            organization_id = COALESCE(EXCLUDED.organization_id, public.station.organization_id),
+                            flow_l_min = COALESCE(EXCLUDED.flow_l_min, public.station.flow_l_min)
+                    RETURNING id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min;
                     """,
-                    (s.id, s.name, s.active, s.device_ip, s.device_model, s.device_serial, s.organization_id),
+                    (s.id, s.name, s.active, s.device_ip, s.device_model, s.device_serial, s.organization_id, s.flow_l_min),
                 )
                 row = await cur.fetchone()
             except Exception as e:
@@ -171,7 +176,7 @@ async def set_station_active(
                 UPDATE public.station
                    SET active = %s
                  WHERE id = %s
-             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
+             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min;
                 """,
                 (patch.active, station_id),
             )
@@ -211,6 +216,10 @@ async def update_station(
         fields.append("organization_id = %s")
         params.append(patch.organization_id)
 
+    if 'flow_l_min' in patch.model_fields_set:
+        fields.append("flow_l_min = %s")
+        params.append(patch.flow_l_min)
+
     if not fields:
         raise HTTPException(status_code=400, detail="No hay campos para actualizar")
 
@@ -223,7 +232,7 @@ async def update_station(
                 UPDATE public.station
                    SET {", ".join(fields)}
                  WHERE id = %s
-             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id;
+             RETURNING id, name, active, device_ip, device_model, device_serial, organization_id, flow_l_min;
                 """,
                 tuple(params),
             )

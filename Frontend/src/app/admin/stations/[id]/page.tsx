@@ -13,6 +13,7 @@ type Station = {
   name?: string | null;
   active: boolean;
   organization_id?: number | null;
+  flow_l_min?: number | null;
 };
 
 type Organization = {
@@ -102,6 +103,7 @@ export default function StationDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editFlow, setEditFlow] = useState("");
   const [editName, setEditName] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editOrganizationId, setEditOrganizationId] = useState("");
@@ -111,6 +113,7 @@ export default function StationDetailPage() {
     const data = await apiJSON<Station>("/stations/" + encodeURIComponent(stationId));
     setStation(data);
     setEditName(data.name || "");
+    setEditFlow(data.flow_l_min == null ? "" : String(data.flow_l_min));
     setEditActive(data.active);
     setEditOrganizationId(data.organization_id ? String(data.organization_id) : "");
   }
@@ -184,6 +187,7 @@ export default function StationDetailPage() {
 
   async function saveEdit() {
     if (!station) return;
+    if (editFlow !== "" && (!Number.isFinite(Number(editFlow)) || Number(editFlow) <= 0 || Number(editFlow) > 1e6)) {setError("Ingresá un caudal mayor a cero y hasta 1.000.000 L/min."); return;}
     setSaving(true);
     setError(null);
     try {
@@ -192,6 +196,7 @@ export default function StationDetailPage() {
         body: JSON.stringify({
           name: editName.trim() || null,
           active: editActive,
+          flow_l_min: editFlow === "" ? null : Number(editFlow),
           ...(user?.role === "owner" && editOrganizationId
             ? { organization_id: Number(editOrganizationId) }
             : {}),
@@ -286,6 +291,12 @@ export default function StationDetailPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <section className="card lg:col-span-2">
               <h2 className="text-lg font-semibold mb-4">Datos de la estación</h2>
+              <div className="mb-4 rounded-lg border p-3">
+                <div className="text-xs text-slate-500">Caudal para calcular volumen por tiempo</div>
+                <div className="font-semibold">{station?.flow_l_min != null ? `${station.flow_l_min} L/min` : "Sin configurar"}</div>
+                <p className="text-xs text-slate-500 mt-1">Se aplica a las cargas nuevas. Los despachos calculados conservan el caudal utilizado.</p>
+                {canAdminThisStation && <button className="btn btn-secondary mt-2" onClick={() => setEditOpen(true)}>Configurar caudal</button>}
+              </div>
               <div className="grid gap-4 sm:grid-cols-3 text-sm">
                 <div>
                   <div className="text-xs text-slate-500">ID</div>
@@ -691,6 +702,11 @@ export default function StationDetailPage() {
                 />
               </div>
 
+              <div className="flex flex-col gap-1">
+                <label htmlFor="station-flow" className="text-xs text-slate-500">Caudal de la estación (L/min)</label>
+                <input id="station-flow" type="number" step="any" min="0.001" max="1000000" className="input" value={editFlow} onChange={e => setEditFlow(e.target.value)} placeholder="Sin configurar" />
+                <span className="text-xs text-slate-500">Usá el caudal verificado. Vacío deja las nuevas cargas pendientes de conversión.</span>
+              </div>
               {user?.role === "owner" && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-slate-500">Organización administradora</label>

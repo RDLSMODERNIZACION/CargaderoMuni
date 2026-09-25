@@ -9,7 +9,7 @@ from app.auth import CurrentUser, get_current_user
 
 class DB:
     def __init__(self):
-        self.sql='';self.saved=None;self.debited=None
+        self.sql='';self.saved=None;self.debited=None;self.rate=600
         self.meta={'meter_method':'timestamps','pump_started_at':'2026-09-24T12:00:10Z','review_reasons':[]}
         self.end=datetime(2026,9,24,12,1,10,tzinfo=timezone.utc)
     def connection(self):return self
@@ -19,7 +19,10 @@ class DB:
     async def execute(self,sql,params):
         self.sql=sql
         if sql.startswith('UPDATE'):self.saved=params
-    async def fetchone(self):return ('2',) if 'SELECT station_id' in self.sql else (self.end,self.meta,self.debited)
+    async def fetchone(self):
+        if 'SELECT station_id' in self.sql:return ('2',)
+        if 'SELECT flow_l_min' in self.sql:return (self.rate,)
+        return (self.end,self.meta,self.debited)
 
 @pytest.fixture
 def setup(monkeypatch):
@@ -30,14 +33,21 @@ def setup(monkeypatch):
     app.dependency_overrides[get_current_user]=lambda:CurrentUser('operator','operator@example.com','operator',True)
     return TestClient(app),db
 
-def test_calculation_and_recalculation_keep_timestamps(setup):
+def test_station_rate_used_and_history_preserved(setup):
     c,db=setup
-    for flow in [600,120]:
-        r=c.post('/water/dispatch/1/convert-time',json={'flow_l_min':flow})
-        assert r.status_code==200,r.text
-        assert r.json()['liters']==flow
-        assert db.saved[2].obj['pump_started_at']=='2026-09-24T12:00:10Z'
-        assert db.saved[2].obj['volume_calculation']['calculated_by']=='operator'
+    r=c.post('/water/dispatch/1/convert-time',json={'flow_l_min':120})
+    assert r.status_code==200,r.text
+    assert r.json()['liters']==600  # client cannot override configured station rate
+    assert db.saved[2].obj['pump_started_at']=='2026-09-24T12:00:10Z'
+    assert db.saved[2].obj['volume_calculation']['calculated_by']=='operator'
+    db.meta=db.saved[2].obj;db.rate=120
+    r=c.post('/water/dispatch/1/convert-time',json={})
+    assert r.json()['liters']==600
+
+def test_missing_station_rate_remains_pending(setup):
+    c,db=setup;db.rate=None
+    assert c.post('/water/dispatch/1/convert-time',json={}).status_code==409
+    assert db.saved is None
 
 @pytest.mark.parametrize('problem',['no_end','no_start','interruption','debited','wrong_method'])
 def test_incomplete_or_unreliable_times_not_converted(setup,problem):

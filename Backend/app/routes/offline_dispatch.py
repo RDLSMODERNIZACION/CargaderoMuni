@@ -186,7 +186,20 @@ async def sync(request: Request, background_tasks: BackgroundTasks):
             if r.meter_method == 'timestamps' and old:
                 liters = old[4]
                 flow = (meta.get('volume_calculation') or {}).get('flow_l_min')
-            note='REGISTRO LOCAL · '+('CERRADO' if r.ended_at else 'EN CURSO')+(' · pendiente de conversión en app' if r.meter_method == 'timestamps' else ' · litros estimados por tiempo')
+            if r.meter_method == 'timestamps' and r.ended_at and r.pump_started_at and not meta.get('volume_calculation'):
+                blocked = {'reinicio_durante_carga', 'intervalo_sin_medicion', 'sin_arranque_observado'} & set(reasons)
+                if not blocked:
+                    await cur.execute('SELECT flow_l_min FROM public.station WHERE id=%s', (r.station_id,))
+                    station_rate = await cur.fetchone()
+                    rate = float(station_rate[0]) if station_rate and station_rate[0] else None
+                    seconds = (r.ended_at - r.pump_started_at).total_seconds()
+                    estimate = round(seconds / 60 * rate, 3) if rate else None
+                    if estimate is not None and 0 <= estimate <= 1e9:
+                        liters, flow = estimate, rate
+                        meta['volume_calculation'] = dict(flow_l_min=rate, duration_seconds=seconds,
+                            liters=estimate, method='time_estimate', source='station',
+                            calculated_by='station_configuration', calculated_at=datetime.now(timezone.utc).isoformat())
+            note='REGISTRO LOCAL · '+('CERRADO' if r.ended_at else 'EN CURSO')+(' · pendiente de conversión en app' if r.meter_method == 'timestamps' and not meta.get('volume_calculation') else ' · litros estimados por tiempo')
             if reasons:note+=' · REVISAR: '+', '.join(reasons)
             await cur.execute('''INSERT INTO public.water_dispatch
                 (offline_id,offline_revision,offline_meta,station_id,ts,ended_at,liters,flow_l_min,

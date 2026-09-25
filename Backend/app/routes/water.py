@@ -961,7 +961,7 @@ def dispatch_timing(meta):
 
 
 class TimeConversion(BaseModel):
-    flow_l_min: float = Field(gt=0, le=1e6, allow_inf_nan=False)
+    flow_l_min: float | None = Field(default=None, gt=0, le=1e6, allow_inf_nan=False)
 
 
 @router.post('/dispatch/{dispatch_id}/convert-time')
@@ -980,6 +980,9 @@ async def convert_dispatch_time(dispatch_id: int, body: TimeConversion,
                 raise HTTPException(404, 'dispatch not found')
             end, meta, debited = row
             meta = dict(meta or {})
+            if meta.get('volume_calculation'):
+                # A normal confirmation/retry must not reprice history with a new station rate.
+                return dict(ok=True, liters=meta['volume_calculation']['liters'], calculation=meta['volume_calculation'])
             if debited:
                 raise HTTPException(409, 'El despacho ya fue debitado; requiere ajuste administrativo')
             start = meta.get('pump_started_at')
@@ -987,16 +990,22 @@ async def convert_dispatch_time(dispatch_id: int, body: TimeConversion,
                 raise HTTPException(409, 'Faltan inicio y fin reales de bomba para convertir')
             if {'reinicio_durante_carga', 'intervalo_sin_medicion', 'sin_arranque_observado'} & set(meta.get('review_reasons', [])):
                 raise HTTPException(409, 'Los horarios requieren revisión por interrupciones; no se puede convertir automáticamente')
+            await cur.execute('SELECT flow_l_min FROM public.station WHERE id=%s', (station[0],))
+            station_rate = await cur.fetchone()
+            flow = station_rate[0] if station_rate else None
+            if not flow:
+                raise HTTPException(409, 'Configurá el caudal en la estación antes de convertir')
+            flow = float(flow)
             seconds = (end - datetime.fromisoformat(start.replace('Z', '+00:00'))).total_seconds()
             if seconds < 0:
                 raise HTTPException(409, 'Fin anterior al inicio')
-            liters = round(seconds / 60 * body.flow_l_min, 3)
+            liters = round(seconds / 60 * flow, 3)
             if liters > 1e9:
                 raise HTTPException(422, 'Volumen fuera de rango')
-            calc = dict(flow_l_min=body.flow_l_min, duration_seconds=seconds, liters=liters,
+            calc = dict(flow_l_min=flow, source='station', duration_seconds=seconds, liters=liters,
                         method='time_estimate', calculated_by=user.id,
                         calculated_at=datetime.now(timezone.utc).isoformat())
             meta['volume_calculation'] = calc
             await cur.execute('UPDATE public.water_dispatch SET liters=%s, flow_l_min=%s, offline_meta=%s WHERE id=%s',
-                              (liters, body.flow_l_min, Jsonb(meta), dispatch_id))
+                              (liters, flow, Jsonb(meta), dispatch_id))
     return dict(ok=True, liters=liters, calculation=calc)

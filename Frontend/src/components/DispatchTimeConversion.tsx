@@ -1,5 +1,5 @@
 "use client";
-import {useState} from "react";
+import {useEffect, useState} from "react";
 import {apiJSON} from "../lib/api/api";
 import {fmtDate, fmtLiters} from "../lib/utils";
 
@@ -10,10 +10,17 @@ export type DispatchTiming = {
   volume_calculation?: {flow_l_min: number; duration_seconds: number; liters: number; calculated_at: string} | null;
 };
 
-export default function DispatchTimeConversion({id, endedAt, timing, canOperate, onSaved}: {
-  id: number; endedAt?: string | null; timing?: DispatchTiming; canOperate: boolean; onSaved: () => void;
+export default function DispatchTimeConversion({id, stationId, endedAt, timing, canOperate, onSaved}: {
+  id: number; stationId: string; endedAt?: string | null; timing?: DispatchTiming; canOperate: boolean; onSaved: () => void;
 }) {
-  const [flow, setFlow] = useState(String(timing?.volume_calculation?.flow_l_min || ""));
+  const [flow, setFlow] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiJSON<{flow_l_min?: number | null}>(`/stations/${encodeURIComponent(stationId)}`)
+      .then(s => {if (!cancelled) setFlow(s.flow_l_min ?? null);})
+      .catch(() => {if (!cancelled) setError("No se pudo consultar el caudal de la estación.");});
+    return () => {cancelled = true;};
+  }, [stationId]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   if (timing?.meter_method !== "timestamps") return null;
@@ -27,7 +34,7 @@ export default function DispatchTimeConversion({id, endedAt, timing, canOperate,
     if (!valid || saving) return;
     setSaving(true); setError("");
     try {
-      await apiJSON(`/water/dispatch/${id}/convert-time`, {method:"POST", body:JSON.stringify({flow_l_min:lpm})});
+      await apiJSON(`/water/dispatch/${id}/convert-time`, {method:"POST", body:JSON.stringify({})});
       onSaved();
     } catch(e: any) {setError(e.message || "No se pudo guardar la conversión");}
     finally {setSaving(false);}
@@ -41,9 +48,9 @@ export default function DispatchTimeConversion({id, endedAt, timing, canOperate,
     </div>
     {interrupted && <p className="text-amber-700">Hubo interrupciones o no se observó el arranque. Revisá el registro antes de asignar litros.</p>}
     {timing.volume_calculation && <p>Volumen estimado guardado: <strong>{fmtLiters(timing.volume_calculation.liters)}</strong> · Caudal aplicado: {timing.volume_calculation.flow_l_min} L/min.</p>}
-    {canOperate && <form className="space-y-3" onSubmit={e => {e.preventDefault(); save();}}>
-      <label htmlFor="conversion-flow" className="block text-sm">Caudal para esta carga (L/min)</label>
-      <input id="conversion-flow" className="input max-w-xs" type="number" step="any" min="0.001" max="1000000" value={flow} onChange={e => setFlow(e.target.value)} placeholder="Ingresá el caudal verificado" disabled={saving}/>
+    {canOperate && !timing.volume_calculation && <form className="space-y-3" onSubmit={e => {e.preventDefault(); save();}}>
+      <p className="text-sm">Caudal de la estación: <strong>{flow ? `${flow} L/min` : "Sin configurar"}</strong></p>
+      <a className="text-sm underline" href={`/admin/stations/${encodeURIComponent(stationId)}`}>Ver configuración de la estación</a>
       <p className="text-sm">Litros estimados = minutos de carga × caudal. {valid && <strong>Resultado: {fmtLiters(liters)}</strong>}</p>
       {error && <p role="alert" className="text-red-700">{error}</p>}
       <button className="btn" disabled={!valid || saving}>{saving ? "Guardando…" : "Guardar litros estimados"}</button>

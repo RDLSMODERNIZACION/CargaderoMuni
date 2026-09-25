@@ -121,3 +121,33 @@ def test_pump_time_is_immutable_after_recorded():
 @pytest.mark.parametrize('patch',[{'liters':0},{'pump_started_at':'2026-09-24T11:59:59Z'},{'pump_started_at':'2026-09-24T12:01:01Z'}])
 def test_invalid_timestamps(patch):
     with pytest.raises(ValueError):off.Receipt(**(timestamps()|patch))
+
+
+def test_station_flow_automatically_converts_closed_load_and_locks_history(monkeypatch):
+    b=timestamps();c=Cursor();original_fetch=c.fetchone;c.rate=120
+    async def fetch():
+        if 'SELECT flow_l_min' in c.sql:return (c.rate,)
+        return await original_fetch()
+    c.fetchone=fetch
+    cli=client(monkeypatch,c)
+    res=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    inserted=c.inserts[-1];assert inserted[6:8]==(100,120) # 50 seconds
+    assert inserted[2].obj['volume_calculation']['source']=='station'
+    receipt=off.Receipt(**b)
+    c.old=(77,'2',1,inserted[2].obj,100,receipt.ended_at,receipt.started_at,[])
+    c.rate=600;b['revision']=2
+    res=cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    assert c.inserts[-1][6:8]==(100,120)
+
+def test_station_flow_does_not_convert_interrupted_or_open_load(monkeypatch):
+    for patch in [{'ended_at':None},{'review_reasons':['intervalo_sin_medicion']}]:
+        b=timestamps()|patch;c=Cursor();original=c.fetchone
+        async def fetch():
+            if 'SELECT flow_l_min' in c.sql:return (600,)
+            return await original()
+        c.fetchone=fetch
+        res=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+        assert res.status_code==200,res.text
+        assert c.inserts[-1][6] is None

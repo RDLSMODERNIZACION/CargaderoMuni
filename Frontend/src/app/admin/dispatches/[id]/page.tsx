@@ -311,7 +311,7 @@ export default function DispatchDetailPage() {
       label: "Resumen",
       content: (
         <div className="grid lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-3"><DispatchTimeConversion key={item.id} id={item.id} endedAt={item.ended_at} timing={item.timing} canOperate={canOperate} onSaved={load}/></div>
+          <div className="lg:col-span-3"><DispatchTimeConversion key={item.id} id={item.id} stationId={item.station_id} endedAt={item.ended_at} timing={item.timing} canOperate={canOperate} onSaved={load}/></div>
           <section className="card lg:col-span-2">
             <h2 className="text-lg font-semibold mb-4">Datos principales</h2>
             <div className="grid sm:grid-cols-2 gap-x-8 gap-y-4 text-sm">
