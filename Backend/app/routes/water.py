@@ -622,9 +622,9 @@ async def create_dispatch_admin(
             await cur.execute(
                 """
                 INSERT INTO public.water_dispatch
-                    (station_id, company_id, liters, flow_l_min, note, ts)
+                    (station_id, company_id, liters, flow_l_min, note, ts, access_method)
                 VALUES
-                    (%s, %s, %s, %s, %s, COALESCE(%s, now()))
+                    (%s, %s, %s, %s, %s, COALESCE(%s, now()), 'manual')
                 RETURNING id, ts
                 """,
                 (

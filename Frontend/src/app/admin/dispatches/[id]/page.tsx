@@ -10,6 +10,7 @@ import { fmtDate, fmtLiters } from "../../../../lib/utils";
 type VehicleAI = {
   status?: string;
   plate?: string | null;
+  plate_validation?: {validator: string; validated_at: string};
   plate_confidence?: number;
   plate_first_pass?: string | null;
   plate_first_confidence?: number;
@@ -322,7 +323,7 @@ export default function DispatchDetailPage() {
                 <div className="text-xs text-slate-500">Empresa</div>
                 <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
                 <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
-                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : "Manual"}</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Litros</div>
@@ -347,11 +348,12 @@ export default function DispatchDetailPage() {
               <div>
                 <div className="text-xs text-slate-500">Patente</div>
                 <div className="text-xl font-bold tracking-wide">{ai.plate || "—"}</div>
-                {ai.plate && (
+                {ai.plate && !ai.plate_validation && (
                   <div className="text-xs text-slate-500 mt-1">
                     Confianza: {pct(ai.plate_confidence)}
                   </div>
                 )}
+                {ai.plate_validation && <div className="text-sm text-green-700">Patente validada por {ai.plate_validation.validator} · {fmtDate(ai.plate_validation.validated_at)}</div>}
                 {ai.plate_review_required && (
                   <div className="mt-2">
                     <StatusPill ok={false}>Revisión manual</StatusPill>
@@ -451,7 +453,8 @@ export default function DispatchDetailPage() {
               </div>
               <div>
                 <div className="text-xs text-slate-500">Lectura IA</div>
-                <div className="font-medium">{ai.plate || "—"} · {pct(ai.plate_confidence)}</div>
+                <div className="font-medium">{ai.plate_first_pass || "—"} · {pct(ai.plate_first_confidence ?? ai.plate_confidence)}</div>
+                {ai.plate_validation && <div className="text-sm text-green-700">Patente validada por {ai.plate_validation.validator} · {fmtDate(ai.plate_validation.validated_at)}</div>}
                 {ai.plate_review_required && (
                   <div className="mt-2">
                     <StatusPill ok={false}>Revisión manual</StatusPill>
@@ -529,7 +532,7 @@ export default function DispatchDetailPage() {
               <div className="text-xs text-slate-500">Empresa</div>
               <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
                 <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
-                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : "Manual"}</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
             </div>
             <div>
               <div className="text-xs text-slate-500">Fecha</div>

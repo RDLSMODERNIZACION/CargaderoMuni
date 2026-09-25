@@ -14,6 +14,7 @@ type Column<T> = any;
 
 type VehicleAI = {
   plate?: string | null;
+  plate_validation?: { validator: string; validated_at: string };
 };
 
 type DispatchItem = {
@@ -71,6 +72,25 @@ function photoCount(item: DispatchItem) {
 export default function DispatchesPage() {
   const { canOperate } = useAuth();
   const router = useRouter();
+  const [review, setReview] = useState<DispatchItem | null>(null);
+  const [plate, setPlate] = useState("");
+  const [savingPlate, setSavingPlate] = useState(false);
+  const [reviewError, setReviewError] = useState("");
+  const [menu, setMenu] = useState<number | null>(null);
+  const normalizedPlate = plate.toUpperCase().replace(/[\s-]/g, "");
+  const validPlate = /^(?:[A-Z]{3}[0-9]{3}|[A-Z]{2}[0-9]{3}[A-Z]{2})$/.test(normalizedPlate);
+  async function savePlate() {
+    if (!review || !validPlate || savingPlate) return;
+    setSavingPlate(true); setReviewError("");
+    try {
+      const result = await apiJSON<{ok: boolean; analysis: VehicleAI}>(`/ai/vehicle/dispatch/${review.id}/plate`, {
+        method: "PATCH", body: JSON.stringify({plate: normalizedPlate}),
+      });
+      setRows(previous => previous.map(row => row.id === review.id ? {...row, ai_vehicle_analysis: result.analysis} : row));
+      setReview(null);
+    } catch (e: any) { setReviewError(e.message || "No se pudo guardar la patente"); }
+    finally { setSavingPlate(false); }
+  }
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -254,12 +274,20 @@ export default function DispatchesPage() {
     {
       key: "company",
       header: "Empresa",
-      render: (r: DispatchItem) => (<div>{r.company_name || r.company_code || "—"}{r.driver_name && <div className="text-xs text-slate-500">{r.driver_name} · RFID</div>}</div>),
+      render: (r: DispatchItem) => r.company_name || r.company_code || "—",
+    },
+    {
+      key: "access_method", header: "Inicio",
+      render: (r: DispatchItem) => ({rfid: "RFID", manual: "Manual", company_pin: "PIN empresa"}[r.access_method || ""] || "Sin identificar"),
+    },
+    {
+      key: "driver_name", header: "Camionero",
+      render: (r: DispatchItem) => r.driver_name || "Sin identificar",
     },
     {
       key: "plate",
-      header: "Patente IA",
-      render: (r: DispatchItem) => r.ai_vehicle_analysis?.plate || "—",
+      header: "Patente",
+      render: (r: DispatchItem) => <div>{r.ai_vehicle_analysis?.plate || "—"}<div className={r.ai_vehicle_analysis?.plate_validation ? "text-xs text-green-700" : "text-xs text-amber-700"}>{r.ai_vehicle_analysis?.plate_validation ? "Validada" : "Pendiente"}</div></div>,
     },
     {
       key: "liters",
@@ -281,6 +309,16 @@ export default function DispatchesPage() {
         const count = photoCount(r);
         return count > 0 ? String(count) : "No";
       },
+    },
+    {
+      key: "actions", header: "Acciones",
+      render: (r: DispatchItem) => <div onClick={e => e.stopPropagation()} onKeyDown={e => { e.stopPropagation(); if (e.key === "Escape") setMenu(null); }}>
+        <button className="btn btn-secondary" aria-label={`Acciones del despacho ${r.id}`} aria-expanded={menu === r.id} onClick={() => setMenu(menu === r.id ? null : r.id)}>⋮</button>
+        {menu === r.id && <div className="flex flex-col gap-1 py-2">
+          <button className="text-sm underline whitespace-nowrap" onClick={() => router.push(("/admin/dispatches/" + r.id) as Route)}>Ver despacho</button>
+          {canOperate && <button className="text-sm underline whitespace-nowrap" onClick={() => {setReview(r); setPlate(r.ai_vehicle_analysis?.plate || ""); setReviewError(""); setMenu(null);}}>Validar patente</button>}
+        </div>}
+      </div>,
     },
   ];
 
@@ -382,6 +420,27 @@ export default function DispatchesPage() {
           />
         )}
       </section>
+
+      {review && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onKeyDown={e => {if (e.key === "Escape" && !savingPlate) setReview(null);}}>
+          <section role="dialog" aria-modal="true" aria-labelledby="plate-title" className="bg-white rounded-2xl w-full max-w-4xl p-5 max-h-[90vh] overflow-auto">
+            <div className="flex justify-between gap-3"><h2 id="plate-title" className="text-xl font-semibold">Validar patente · Despacho #{review.id}</h2><button className="btn btn-secondary" disabled={savingPlate} onClick={() => setReview(null)}>Cerrar</button></div>
+            <p className="text-sm text-slate-500 my-3">Compará la patente con las fotos. Podés abrir cada foto para ampliarla y corregir la lectura antes de confirmar.</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {Array.from(new Set([...(review.photo_paths || []), review.photo_path].filter(Boolean))).map(url => <a key={url} href={url!} target="_blank" rel="noopener noreferrer"><img src={url!} alt="Foto del despacho para revisar la patente" className="w-full rounded-lg" /></a>)}
+            </div>
+            {!photoCount(review) && <p className="my-3 text-amber-700">Este despacho no tiene fotos. Confirmá únicamente si contás con otra evidencia.</p>}
+            {review.ai_vehicle_analysis?.plate_validation && <p className="text-sm my-3">Última validación: {review.ai_vehicle_analysis.plate_validation.validator} · {fmtDate(review.ai_vehicle_analysis.plate_validation.validated_at)}</p>}
+            <form onSubmit={e => {e.preventDefault(); savePlate();}} className="mt-4 space-y-3">
+              <label className="block" htmlFor="review-plate">Patente confirmada</label>
+              <input autoFocus id="review-plate" className="input uppercase" value={plate} maxLength={20} onChange={e => setPlate(e.target.value)} placeholder="ABC123 o AB123CD" disabled={savingPlate} />
+              <p className={validPlate ? "text-sm text-green-700" : "text-sm text-amber-700"}>{validPlate ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.` : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}</p>
+              {reviewError && <p role="alert" className="text-red-700">{reviewError}</p>}
+              <button className="btn" disabled={!validPlate || savingPlate}>{savingPlate ? "Guardando…" : "Confirmar patente"}</button>
+            </form>
+          </section>
+        </div>
+      )}
 
       {createOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">

@@ -260,7 +260,13 @@ async def analyze_dispatch_vehicle(dispatch_id: int) -> dict[str, Any]:
             await cur.execute(
                 """
                 UPDATE public.water_dispatch
-                SET ai_vehicle_analysis = %s
+                SET ai_vehicle_analysis = %s::jsonb ||
+                    CASE WHEN ai_vehicle_analysis ? 'plate_validation' THEN
+                      jsonb_build_object('plate', ai_vehicle_analysis->'plate',
+                        'plate_validation', ai_vehicle_analysis->'plate_validation',
+                        'plate_reviews', ai_vehicle_analysis->'plate_reviews',
+                        'plate_review_required', false)
+                    ELSE '{}'::jsonb END
                 WHERE id = %s
                 """,
                 (Jsonb(result), dispatch_id),
