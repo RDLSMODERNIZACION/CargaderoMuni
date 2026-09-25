@@ -46,3 +46,28 @@ npx tsc --noEmit
 ```
 
 Los tests no escriben datos en Supabase ni en el teclado. La prueba física pendiente verifica compatibilidad ISAPI, el número de tarjeta leído y los eventos emitidos por el firmware.
+
+## Identificación de despachos por tarjeta en el backend
+
+`POST /water/offline/sync` resuelve los recibos `access_method=rfid` por
+`card_no` (texto exacto con ceros iniciales) y `station_id`. No requiere que
+`employee_no`, `company_code` o `pin_user_id` coincidan con el padrón local.
+Los envíos actuales del nodo offline 1.1.0 ya incluyen esos campos: no hace
+falta reinstalarlo para esta mejora del backend.
+
+El servidor exige un único titular en las credenciales de esa estación o
+credenciales globales, además de usuario, empresa, credencial y permiso de
+estación activos. La vigencia de la tarjeta se evalúa a la fecha original de
+la carga; los estados de habilitación se evalúan al recibirla porque no hay
+historial de revocaciones. Una tarjeta desconocida, ambigua o no habilitada
+queda sin empresa/camionero, conserva RFID y agrega un motivo de revisión.
+
+La tarjeta y el resultado se guardan en `offline_meta`. Las respuestas del
+listado y detalle proyectan solo el estado y los nombres de la asociación;
+no devuelven toda la metadata. Una asociación resuelta queda fijada para
+revisiones tardías y fotos, aunque luego cambie el padrón. No se modifican
+cargas históricas ni se inventa un titular para una tarjeta desconocida.
+
+La prueba aislada de Windows del paquete del lector muestra una vista previa
+contra el padrón local y no envía despachos: su Debug no es la resolución del
+backend. La validación final se hace con un recibo enviado por el registrador.

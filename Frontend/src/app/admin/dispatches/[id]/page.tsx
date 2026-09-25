@@ -327,7 +327,7 @@ export default function DispatchDetailPage() {
                 <div className="text-xs text-slate-500">Empresa</div>
                 <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
                 <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
-                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? (item.driver_name ? "RFID" : "RFID · sin identificar") : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
               </div>
               <div>
                 <div className="text-xs text-slate-500">Litros</div>
@@ -536,7 +536,7 @@ export default function DispatchDetailPage() {
               <div className="text-xs text-slate-500">Empresa</div>
               <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
                 <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
-                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? "RFID" : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
+                <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? (item.driver_name ? "RFID" : "RFID · sin identificar") : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
             </div>
             <div>
               <div className="text-xs text-slate-500">Fecha</div>

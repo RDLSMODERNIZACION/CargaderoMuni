@@ -84,6 +84,9 @@ def check_revision(old, r, fingerprint):
         raise HTTPException(409, 'No se puede cambiar el inicio de una carga')
     if old[3].get('meter_method', 'time_estimate') != r.meter_method:
         raise HTTPException(409, 'No se puede cambiar el método de registro')
+    if old[3].get('identity_resolution', {}).get('status') == 'resolved':
+        if r.access_method != 'rfid' or r.card_no.strip() != old[3].get('card_no'):
+            raise HTTPException(409, 'No se puede cambiar la tarjeta de un despacho identificado')
     prior_pump = old[3].get('pump_started_at')
     if prior_pump and (not r.pump_started_at or datetime.fromisoformat(prior_pump.replace('Z', '+00:00')) != r.pump_started_at):
         raise HTTPException(409, 'No se puede cambiar el inicio de bomba')
@@ -93,6 +96,42 @@ def check_revision(old, r, fingerprint):
     if old[5] and (r.ended_at != old[5] or (r.meter_method == 'time_estimate' and float(prior_liters or 0) != r.liters)):
         raise HTTPException(409, 'Carga cerrada: solo se admiten fotos o metadatos tardíos')
     return False
+
+
+async def resolve_card(cur, r, station_active):
+    """Resolve a unique card owner; evaluate validity at the recorded access time.
+    Current enable flags are required because the schema has no revocation history.
+    Multiple owners are reviewable, even if only one is currently enabled.
+    """
+    result = dict(status='unknown', source='backend_card',
+                  resolved_at=datetime.now(timezone.utc).isoformat())
+    card = r.card_no.strip()
+    if not card:
+        return result | dict(status='missing_card')
+    await cur.execute("""SELECT DISTINCT p.id,c.id,p.name,c.name,
+        COALESCE(NULLIF(p.device_employee_no,''),'DRIVER-'||p.id::text),c.code,
+        COALESCE(p.enabled AND c.active AND sca.active AND a.active
+          AND (a.valid_from IS NULL OR a.valid_from<=%s)
+          AND (a.valid_until IS NULL OR a.valid_until>%s),false)
+        FROM public.access_credential a
+        JOIN public.pin_user p ON p.id=a.pin_user_id
+        JOIN public.company c ON c.id=p.company_id
+        LEFT JOIN public.station_company_access sca
+          ON sca.company_id=c.id AND sca.station_id=%s
+        WHERE trim(a.value)=%s AND a.kind IN ('rfid','card')
+          AND (a.station_id IS NULL OR a.station_id=%s)""",
+        (r.started_at,r.started_at,r.station_id,card,r.station_id))
+    rows = await cur.fetchall()
+    if not rows:
+        return result
+    if len({row[0] for row in rows}) != 1:
+        return result | dict(status='ambiguous')
+    eligible = [row for row in rows if row[6]]
+    if not station_active or not eligible:
+        return result | dict(status='not_authorized')
+    row = eligible[0]
+    return result | dict(status='resolved', pin_user_id=row[0], company_id=row[1],
+        driver_name=row[2], company_name=row[3], employee_no=row[4], company_code=row[5])
 
 
 async def identity(cur, r):
@@ -107,6 +146,15 @@ async def identity(cur, r):
         raise HTTPException(422, 'Estación inexistente')
     if not station[0]:
         reasons.append('estacion_actualmente_inactiva')
+    if r.access_method == 'rfid':
+        # Device employee numbers are local identifiers, not database identities.
+        resolution = await resolve_card(cur, r, bool(station[0]))
+        if resolution['status'] == 'resolved':
+            reasons = [x for x in reasons if x not in {
+                'padron_ausente_o_vencido', 'identidad_no_habilitada_en_padron'}]
+            return resolution['pin_user_id'], resolution['company_id'], sorted(set(reasons)), resolution
+        reasons.append('rfid_' + resolution['status'])
+        return None, None, sorted(set(reasons)), resolution
     if r.company_code:
         await cur.execute('SELECT id,active FROM public.company WHERE code=%s', (r.company_code,))
         c=await cur.fetchone()
@@ -116,21 +164,8 @@ async def identity(cur, r):
             access=await cur.fetchone()
             if not c[1] or not access or not access[0]: reasons.append('empresa_sin_habilitacion_actual')
         else: reasons.append('empresa_no_resuelta')
-    if r.access_method=='rfid':
-        await cur.execute("""SELECT p.id,p.company_id,p.enabled FROM public.pin_user p
-          WHERE COALESCE(NULLIF(p.device_employee_no,''),'DRIVER-'||p.id::text)=%s""",(r.employee_no,))
-        rows=await cur.fetchall()
-        if len(rows)==1 and rows[0][1]==company_id and company_id is not None and (r.pin_user_id is None or r.pin_user_id==rows[0][0]):
-            driver_id=rows[0][0]
-            await cur.execute("""SELECT 1 FROM public.access_credential WHERE pin_user_id=%s
-             AND trim(value)=%s AND kind IN ('rfid','card') AND active
-             AND (station_id IS NULL OR station_id=%s)
-             AND (valid_from IS NULL OR valid_from<=%s) AND (valid_until IS NULL OR valid_until>%s) LIMIT 1""",
-             (driver_id,r.card_no,r.station_id,r.started_at,r.started_at))
-            if not rows[0][2] or not await cur.fetchone():reasons.append('credencial_sin_confirmacion_actual')
-        else: reasons.append('camionero_no_resuelto_o_empresa_distinta')
     if r.access_method=='company_pin' and not company_id: reasons.append('pin_sin_empresa_resuelta')
-    return driver_id,company_id,sorted(set(reasons))
+    return driver_id,company_id,sorted(set(reasons)), None
 
 
 SELECT = '''SELECT id,station_id,offline_revision,offline_meta,liters,ended_at,ts,photo_paths
@@ -179,10 +214,20 @@ async def sync(request: Request, background_tasks: BackgroundTasks):
             old=await cur.fetchone()
             if check_revision(old,r,fingerprint):
                 return dict(ok=True,id=int(old[0]),local_id=str(r.local_id),revision=r.revision)
-            driver,company,reasons=await identity(cur,r)
+            driver,company,reasons,resolution=await identity(cur,r)
+            # Later photos/retries must not reassign a resolved dispatch after roster edits.
+            if old and old[3].get('identity_resolution', {}).get('status') == 'resolved':
+                resolution = old[3]['identity_resolution']
+                driver, company = resolution['pin_user_id'], resolution['company_id']
+                reasons = sorted(set(old[3].get('review_reasons', []) + [
+                    reason for reason in r.review_reasons if reason not in {
+                        'padron_ausente_o_vencido', 'identidad_no_habilitada_en_padron'}]))
             meta=r.model_dump(mode='json');meta['digest']=fingerprint;meta['review_reasons']=reasons
-            # Do not retain card numbers in the remote audit metadata.
-            meta.pop('card_no',None)
+            # Preserve exact card text for unresolved/offline receipts; never expose full meta publicly.
+            meta['card_no'] = r.card_no.strip()
+            if resolution:
+                meta['identity_resolution'] = resolution
+            meta['local_review_reasons'] = list(r.review_reasons)
             if old and old[3].get('volume_calculation'):
                 meta['volume_calculation'] = old[3]['volume_calculation']
             liters = r.liters

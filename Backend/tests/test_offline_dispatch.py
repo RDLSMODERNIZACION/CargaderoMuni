@@ -76,8 +76,8 @@ def test_unknown_historical_driver_is_preserved_for_review(monkeypatch):
     c=Cursor();r=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
     assert r.status_code==200,r.text
     meta=c.inserts[0][2].obj
-    assert 'camionero_no_resuelto_o_empresa_distinta' in meta['review_reasons']
-    assert 'card_no' not in meta
+    assert 'rfid_unknown' in meta['review_reasons']
+    assert meta['card_no']=='0310250706'
     assert c.inserts[0][8] is None and c.inserts[0][9] is None
 
 
@@ -167,3 +167,65 @@ def test_creation_tolerance_does_not_hide_invalid_clock(milliseconds):
     b=timestamps();start=datetime.fromisoformat(b['started_at'].replace('Z','+00:00'))
     b['pump_started_at']=(start-timedelta(milliseconds=milliseconds)).isoformat()
     with pytest.raises(ValueError):off.Receipt(**b)
+
+class CardCursor(Cursor):
+    def __init__(self, rows):
+        super().__init__();self.rows=rows;self.card_params=[]
+    async def execute(self,sql,params=None):
+        await super().execute(sql,params)
+        if 'FROM public.access_credential a' in sql:self.card_params.append(params)
+    async def fetchall(self):
+        return self.rows if 'FROM public.access_credential a' in self.sql else []
+
+
+def test_card_only_resolves_driver_ignores_device_and_local_company(monkeypatch):
+    c=CardCursor([(2,3,'Victor','KOMPASS','DRIVER-2','3',True)])
+    b=timestamps()|dict(access_method='rfid',card_no='0310250706',employee_no='5',
+        company_code='WRONG',pin_user_id=999,
+        review_reasons=['padron_ausente_o_vencido','identidad_no_habilitada_en_padron','foto_no_disponible'])
+    res=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    row=c.inserts[-1];meta=row[2].obj
+    assert row[8:11]==(3,2,'rfid')
+    assert meta['card_no']=='0310250706'
+    assert meta['identity_resolution']['driver_name']=='Victor'
+    assert meta['review_reasons']==['foto_no_disponible']
+    assert c.card_params[-1][2:] == ('2','0310250706','2')
+    assert c.card_params[-1][0]==off.Receipt(**b).started_at
+
+
+@pytest.mark.parametrize('rows,status',[
+    ([], 'unknown'),
+    ([(2,3,'V','K','DRIVER-2','3',False)],'not_authorized'),
+    ([(2,3,'V','K','DRIVER-2','3',True),(4,4,'Other','X','DRIVER-4','4',True)],'ambiguous'),
+])
+def test_unresolved_card_stays_rfid_without_company_assignment(monkeypatch,rows,status):
+    c=CardCursor(rows);b=timestamps()|dict(access_method='rfid',card_no='0311022018',company_code='3')
+    res=client(monkeypatch,c).post('/water/offline/sync',files={'record':(None,json.dumps(b))})
+    assert res.status_code==200,res.text
+    row=c.inserts[-1]
+    assert row[8:11]==(None,None,'rfid')
+    assert row[2].obj['identity_resolution']['status']==status
+
+
+def test_late_revision_preserves_association_after_card_reassigned(monkeypatch):
+    c=CardCursor([(2,3,'Victor','KOMPASS','DRIVER-2','3',True)])
+    b=timestamps()|dict(access_method='rfid',card_no='0310250706')
+    cli=client(monkeypatch,c)
+    assert cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))}).status_code==200
+    meta=c.inserts[-1][2].obj;r=off.Receipt(**b)
+    c.old=(77,'2',1,meta,None,r.ended_at,r.started_at,[])
+    c.rows=[(9,10,'Nuevo','Otra','DRIVER-9','10',True)]
+    b['revision']=2
+    assert cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))}).status_code==200
+    assert c.inserts[-1][8:11]==(3,2,'rfid')
+    assert c.inserts[-1][2].obj['identity_resolution']==meta['identity_resolution']
+    b['card_no']='other'
+    assert cli.post('/water/offline/sync',files={'record':(None,json.dumps(b))}).status_code==409
+
+
+def test_safe_identity_projection_excludes_card():
+    from app.routes.water import dispatch_identity
+    assert dispatch_identity({'card_no':'0311022018','identity_resolution':{
+        'status':'resolved','driver_name':'Victor','card_no':'secret','pin_user_id':2}})=={
+        'status':'resolved','driver_name':'Victor'}

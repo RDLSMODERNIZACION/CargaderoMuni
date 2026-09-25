@@ -280,7 +280,7 @@ export default function DispatchesPage() {
     },
     {
       key: "access_method", header: "Inicio",
-      render: (r: DispatchItem) => ({rfid: "RFID", manual: "Manual", company_pin: "PIN empresa"}[r.access_method || ""] || "Sin identificar"),
+      render: (r: DispatchItem) => ({rfid: r.driver_name ? "RFID" : "RFID · sin identificar", manual: "Manual", company_pin: "PIN empresa"}[r.access_method || ""] || "Sin identificar"),
     },
     {
       key: "driver_name", header: "Camionero",

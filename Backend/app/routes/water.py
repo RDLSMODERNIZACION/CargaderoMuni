@@ -490,11 +490,12 @@ async def recent(
                 "note": r[7],
                 "ai_vehicle_analysis": r[8] or {},
                 "company_id": r[9],
-                "company_name": r[10],
+                "company_name": dispatch_identity(r[16]).get("company_name") or r[10],
                 "company_code": r[11],
-                "pin_user_id": r[12], "driver_name": r[13], "access_method": r[14],
+                "pin_user_id": r[12], "driver_name": dispatch_identity(r[16]).get("driver_name") or r[13], "access_method": r[14],
                 "ended_at": r[15].isoformat() if r[15] else None,
                 "timing": dispatch_timing(r[16]),
+                "identity": dispatch_identity(r[16]),
             }
         )
 
@@ -573,11 +574,12 @@ async def get_dispatch(
             "max_affordable_liters": r[13],
             "debited_at": r[14].isoformat() if r[14] else None,
             "company_id": r[15],
-            "company_name": r[16],
+            "company_name": dispatch_identity(r[22]).get("company_name") or r[16],
             "company_code": r[17],
-            "pin_user_id": r[18], "driver_name": r[19], "access_method": r[20],
+            "pin_user_id": r[18], "driver_name": dispatch_identity(r[22]).get("driver_name") or r[19], "access_method": r[20],
             "ended_at": r[21].isoformat() if r[21] else None,
             "timing": dispatch_timing(r[22]),
+            "identity": dispatch_identity(r[22]),
         },
     }
 
@@ -952,6 +954,13 @@ async def attach_photo(dispatch_id: int, request: Request, background_tasks: Bac
             "ai_vehicle_analysis": ai_analysis,
         }
     )
+
+
+def dispatch_identity(meta):
+    """Safe projection, available only through existing station-scoped dispatch routes."""
+    resolution = (meta or {}).get('identity_resolution') or {}
+    return {key: resolution[key] for key in
+            ('status', 'source', 'driver_name', 'company_name') if key in resolution}
 
 
 def dispatch_timing(meta):
