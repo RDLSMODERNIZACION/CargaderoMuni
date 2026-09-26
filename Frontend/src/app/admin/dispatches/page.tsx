@@ -517,21 +517,6 @@ export default function DispatchesPage() {
               Ver despacho
             </button>
 
-            {canOperate && actionMenu.row.timing?.meter_method === "timestamps" && (
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
-                onClick={() => {
-                  const id = actionMenu.row.id;
-                  setActionMenu(null);
-                  router.push(("/admin/dispatches/" + id) as Route);
-                }}
-              >
-                Convertir tiempo a litros
-              </button>
-            )}
-
             {canOperate && (
               <button
                 type="button"
@@ -570,7 +555,7 @@ export default function DispatchesPage() {
       {review && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onKeyDown={e => {if (e.key === "Escape" && !savingPlate) setReview(null);}}>
           <section role="dialog" aria-modal="true" aria-labelledby="plate-title" className="bg-white rounded-2xl w-full max-w-4xl p-5 max-h-[90vh] overflow-auto">
-            <div className="flex justify-between gap-3"><h2 id="plate-title" className="text-xl font-semibold">Validar patente · Despacho #{review.id}</h2><button className="btn btn-secondary" disabled={savingPlate} onClick={() => setReview(null)}>Cerrar</button></div>
+            <div className="flex justify-between gap-3"><h2 id="plate-title" className="text-xl font-semibold">Validar datos · Despacho #{review.id}</h2><button className="btn btn-secondary" disabled={savingPlate} onClick={() => setReview(null)}>Cerrar</button></div>
             <p className="text-sm text-slate-500 my-3">Compará la patente con las fotos. Podés abrir cada foto para ampliarla y corregir la lectura antes de confirmar.</p>
             <div className="grid sm:grid-cols-2 gap-3">
               {Array.from(new Set([...(review.photo_paths || []), review.photo_path].filter(Boolean))).map(url => <a key={url} href={url!} target="_blank" rel="noopener noreferrer"><img src={url!} alt="Foto del despacho para revisar la patente" className="w-full rounded-lg" /></a>)}
@@ -578,7 +563,7 @@ export default function DispatchesPage() {
             {!photoCount(review) && <p className="my-3 text-amber-700">Este despacho no tiene fotos. Confirmá únicamente si contás con otra evidencia.</p>}
             {review.ai_vehicle_analysis?.plate_validation && <p className="text-sm my-3">Última validación: {review.ai_vehicle_analysis.plate_validation.validator} · {fmtDate(review.ai_vehicle_analysis.plate_validation.validated_at)}</p>}
             <form onSubmit={e => {e.preventDefault(); savePlate();}} className="mt-4 space-y-3">
-              <label className="block" htmlFor="review-plate">Patente confirmada</label>
+              <label className="block" htmlFor="review-plate">Patente / dato confirmado</label>
               <input autoFocus id="review-plate" className="input uppercase" value={plate} maxLength={20} onChange={e => setPlate(e.target.value)} placeholder="ABC123 o AB123CD" disabled={savingPlate} />
               <p className={validPlate ? "text-sm text-green-700" : "text-sm text-amber-700"}>{validPlate ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.` : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}</p>
               {reviewError && <p role="alert" className="text-red-700">{reviewError}</p>}
