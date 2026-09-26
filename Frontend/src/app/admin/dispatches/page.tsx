@@ -80,6 +80,8 @@ export default function DispatchesPage() {
   const [reviewError, setReviewError] = useState("");
   const [reviewTab, setReviewTab] = useState<"datos" | "fotos">("datos");
   const [reviewPhotoIndex, setReviewPhotoIndex] = useState(0);
+  const [photoFullscreen, setPhotoFullscreen] = useState(false);
+  const [photoZoom, setPhotoZoom] = useState(1);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionMenu, setActionMenu] = useState<{
     row: DispatchItem;
@@ -531,6 +533,8 @@ export default function DispatchesPage() {
                   setReviewError("");
                   setReviewTab("datos");
                   setReviewPhotoIndex(0);
+                  setPhotoFullscreen(false);
+                  setPhotoZoom(1);
                   setActionMenu(null);
                 }}
               >
@@ -743,11 +747,21 @@ export default function DispatchesPage() {
                   {reviewPhotos.length > 0 && activePhoto ? (
                     <>
                       <div className="relative flex h-[58vh] items-center justify-center p-5">
-                        <img
-                          src={activePhoto}
-                          alt={`Foto ${reviewPhotoIndex + 1} del despacho ${review.id}`}
-                          className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
-                        />
+                        <button
+                          type="button"
+                          className="flex h-full w-full cursor-zoom-in items-center justify-center"
+                          onClick={() => {
+                            setPhotoZoom(1);
+                            setPhotoFullscreen(true);
+                          }}
+                          aria-label="Abrir foto en pantalla completa"
+                        >
+                          <img
+                            src={activePhoto}
+                            alt={`Foto ${reviewPhotoIndex + 1} del despacho ${review.id}`}
+                            className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
+                          />
+                        </button>
 
                         {reviewPhotos.length > 1 && (
                           <>
@@ -772,6 +786,9 @@ export default function DispatchesPage() {
 
                         <div className="absolute bottom-7 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-3 py-1 text-sm text-white">
                           {reviewPhotoIndex + 1} / {reviewPhotos.length}
+                        </div>
+                        <div className="absolute right-5 top-5 rounded-full bg-black/65 px-3 py-1 text-xs text-white">
+                          Tocá la foto para ampliar
                         </div>
                       </div>
 
@@ -804,6 +821,124 @@ export default function DispatchesPage() {
                       Este despacho no tiene fotos.
                     </div>
                   )}
+                </div>
+              )}
+
+              {photoFullscreen && activePhoto && (
+                <div
+                  className="fixed inset-0 z-[80] flex flex-col bg-black/95"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Visor de foto en pantalla completa"
+                  onWheel={(e) => {
+                    e.preventDefault();
+                    setPhotoZoom((z) =>
+                      Math.min(5, Math.max(0.5, z + (e.deltaY < 0 ? 0.25 : -0.25)))
+                    );
+                  }}
+                  onClick={() => setPhotoFullscreen(false)}
+                >
+                  <div className="absolute left-1/2 top-4 z-[90] flex -translate-x-1/2 items-center gap-2 rounded-full bg-white/95 p-2 shadow-xl">
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-full text-xl font-semibold text-slate-900 hover:bg-slate-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPhotoZoom((z) => Math.max(0.5, z - 0.25));
+                      }}
+                      aria-label="Alejar"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-[64px] text-center text-sm font-medium text-slate-700">
+                      {Math.round(photoZoom * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      className="flex h-10 w-10 items-center justify-center rounded-full text-xl font-semibold text-slate-900 hover:bg-slate-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPhotoZoom((z) => Math.min(5, z + 0.25));
+                      }}
+                      aria-label="Acercar"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-full px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPhotoZoom(1);
+                      }}
+                    >
+                      100%
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="absolute right-4 top-4 z-[90] flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-xl text-slate-900 shadow-xl hover:bg-white"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPhotoFullscreen(false);
+                      setPhotoZoom(1);
+                    }}
+                    aria-label="Cerrar pantalla completa"
+                  >
+                    ×
+                  </button>
+
+                  {reviewPhotos.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        className="absolute left-5 top-1/2 z-[90] flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-3xl text-slate-900 shadow-xl hover:bg-white"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          previousPhoto();
+                          setPhotoZoom(1);
+                        }}
+                        aria-label="Foto anterior"
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        className="absolute right-5 top-1/2 z-[90] flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-3xl text-slate-900 shadow-xl hover:bg-white"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          nextPhoto();
+                          setPhotoZoom(1);
+                        }}
+                        aria-label="Foto siguiente"
+                      >
+                        ›
+                      </button>
+                    </>
+                  )}
+
+                  <div
+                    className="flex h-full w-full items-center justify-center overflow-auto p-6 pt-20"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <img
+                      src={activePhoto}
+                      alt={`Foto ${reviewPhotoIndex + 1} ampliada del despacho ${review.id}`}
+                      className="max-h-none max-w-none select-none object-contain transition-transform duration-150"
+                      style={{
+                        transform: `scale(${photoZoom})`,
+                        transformOrigin: "center center",
+                        maxWidth: photoZoom <= 1 ? "95vw" : "none",
+                        maxHeight: photoZoom <= 1 ? "85vh" : "none",
+                      }}
+                      draggable={false}
+                    />
+                  </div>
+
+                  <div className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-sm text-white">
+                    {reviewPhotoIndex + 1} / {reviewPhotos.length} · Rueda del mouse para zoom
+                  </div>
                 </div>
               )}
             </section>
