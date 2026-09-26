@@ -458,7 +458,7 @@ async def recent(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                    wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
+                    wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta, wd.person_role
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c
                     ON c.id = wd.company_id
@@ -496,6 +496,7 @@ async def recent(
                 "ended_at": r[15].isoformat() if r[15] else None,
                 "timing": dispatch_timing(r[16]),
                 "identity": dispatch_identity(r[16]),
+                "person_role": r[17],
             }
         )
 
@@ -536,7 +537,7 @@ async def get_dispatch(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                        wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta, wd.person_role
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c ON c.id = wd.company_id
                     LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
@@ -580,6 +581,7 @@ async def get_dispatch(
             "ended_at": r[21].isoformat() if r[21] else None,
             "timing": dispatch_timing(r[22]),
             "identity": dispatch_identity(r[22]),
+            "person_role": r[23],
         },
     }
 

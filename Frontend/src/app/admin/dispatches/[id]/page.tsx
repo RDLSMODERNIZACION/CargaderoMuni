@@ -66,6 +66,7 @@ type DispatchDetail = {
   company_id?: number | null;
   company_name?: string | null;
   driver_name?: string | null;
+  person_role?: "driver" | "loading_staff" | null;
   access_method?: string | null;
   company_code?: string | null;
 };
@@ -326,7 +327,8 @@ export default function DispatchDetailPage() {
               <div>
                 <div className="text-xs text-slate-500">Empresa</div>
                 <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
-                <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
+                <div className="mt-2 font-medium">{item.person_role === "loading_staff" ? "Carga asistida · Personal de carga" : item.person_role === "driver" ? "Autocarga · Camionero" : "Carga sin clasificar"}</div>
+                <div className="mt-2 text-xs text-slate-500">Persona · Acceso</div>
                 <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? (item.driver_name ? "RFID" : "RFID · sin identificar") : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
               </div>
               <div>
@@ -535,7 +537,8 @@ export default function DispatchDetailPage() {
             <div>
               <div className="text-xs text-slate-500">Empresa</div>
               <div className="font-medium">{item.company_name || item.company_code || "—"}</div>
-                <div className="mt-2 text-xs text-slate-500">Camionero · Acceso</div>
+                <div className="mt-2 font-medium">{item.person_role === "loading_staff" ? "Carga asistida · Personal de carga" : item.person_role === "driver" ? "Autocarga · Camionero" : "Carga sin clasificar"}</div>
+                <div className="mt-2 text-xs text-slate-500">Persona · Acceso</div>
                 <div className="font-medium">{item.driver_name || "Sin identificar"} · {item.access_method === "rfid" ? (item.driver_name ? "RFID" : "RFID · sin identificar") : item.access_method === "company_pin" ? "PIN empresa" : item.access_method === "manual" ? "Manual" : "Sin identificar"}</div>
             </div>
             <div>

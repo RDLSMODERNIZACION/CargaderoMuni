@@ -29,6 +29,7 @@ type DispatchItem = {
   company_id?: number | null;
   company_name?: string | null;
   driver_name?: string | null;
+  person_role?: "driver" | "loading_staff" | null;
   access_method?: string | null;
   company_code?: string | null;
   ai_vehicle_analysis?: VehicleAI | null;
@@ -342,8 +343,12 @@ export default function DispatchesPage() {
       render: (r: DispatchItem) => ({rfid: r.driver_name ? "RFID" : "RFID · sin identificar", manual: "Manual", company_pin: "PIN empresa"}[r.access_method || ""] || "Sin identificar"),
     },
     {
-      key: "driver_name", header: "Camionero",
+      key: "driver_name", header: "Persona",
       render: (r: DispatchItem) => r.driver_name || "Sin identificar",
+    },
+    {
+      key: "person_role", header: "Tipo de carga",
+      render: (r: DispatchItem) => r.person_role === "loading_staff" ? "Carga asistida" : r.person_role === "driver" ? "Autocarga" : "Sin clasificar",
     },
     {
       key: "plate",
@@ -664,9 +669,10 @@ export default function DispatchesPage() {
                       </div>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-4">
-                      <div className="text-xs text-slate-500">Camionero</div>
+                      <div className="text-xs text-slate-500">Persona</div>
                       <div className="mt-1 font-medium">
                         {review.driver_name || "Sin identificar"}
+                        <div className="text-xs text-slate-500">{review.person_role === "loading_staff" ? "Personal de carga · Carga asistida" : review.person_role === "driver" ? "Camionero · Autocarga" : "Carga sin clasificar"}</div>
                       </div>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-4">
