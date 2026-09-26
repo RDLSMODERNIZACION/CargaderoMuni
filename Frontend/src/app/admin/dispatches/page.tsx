@@ -72,12 +72,13 @@ function photoCount(item: DispatchItem) {
 }
 
 export default function DispatchesPage() {
-  const { canOperate } = useAuth();
+  const { canOperate, canAdmin } = useAuth();
   const router = useRouter();
   const [review, setReview] = useState<DispatchItem | null>(null);
   const [plate, setPlate] = useState("");
   const [savingPlate, setSavingPlate] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionMenu, setActionMenu] = useState<{
     row: DispatchItem;
     top: number;
@@ -94,7 +95,7 @@ export default function DispatchesPage() {
 
     const rect = event.currentTarget.getBoundingClientRect();
     const menuWidth = 230;
-    const menuHeight = 150;
+    const menuHeight = canAdmin ? 200 : 150;
     const gap = 8;
     const viewportPadding = 12;
 
@@ -123,6 +124,29 @@ export default function DispatchesPage() {
       setReview(null);
     } catch (e: any) { setReviewError(e.message || "No se pudo guardar la patente"); }
     finally { setSavingPlate(false); }
+  }
+
+  async function deleteDispatch(row: DispatchItem) {
+    if (deletingId !== null) return;
+    const confirmed = window.confirm(
+      `¿Eliminar el despacho #${row.id}? Esta acción no se puede deshacer.`
+    );
+    if (!confirmed) return;
+
+    setActionMenu(null);
+    setDeletingId(row.id);
+    setError(null);
+
+    try {
+      await apiJSON<{ ok: boolean; id: number }>(`/water/dispatch/${row.id}`, {
+        method: "DELETE",
+      });
+      setRows((previous) => previous.filter((item) => item.id !== row.id));
+    } catch (e: any) {
+      setError(e?.message ?? "No se pudo eliminar el despacho");
+    } finally {
+      setDeletingId(null);
+    }
   }
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -523,6 +547,21 @@ export default function DispatchesPage() {
               >
                 Validar patente
               </button>
+            )}
+
+            {canAdmin && (
+              <>
+                <div className="my-1 border-t border-slate-200" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={deletingId === actionMenu.row.id}
+                  className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => deleteDispatch(actionMenu.row)}
+                >
+                  {deletingId === actionMenu.row.id ? "Eliminando…" : "Eliminar despacho"}
+                </button>
+              </>
             )}
           </div>
         </>
