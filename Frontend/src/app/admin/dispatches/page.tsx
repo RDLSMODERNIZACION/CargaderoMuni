@@ -78,6 +78,8 @@ export default function DispatchesPage() {
   const [plate, setPlate] = useState("");
   const [savingPlate, setSavingPlate] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [reviewTab, setReviewTab] = useState<"datos" | "fotos">("datos");
+  const [reviewPhotoIndex, setReviewPhotoIndex] = useState(0);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionMenu, setActionMenu] = useState<{
     row: DispatchItem;
@@ -527,6 +529,8 @@ export default function DispatchesPage() {
                   setReview(row);
                   setPlate(row.ai_vehicle_analysis?.plate || "");
                   setReviewError("");
+                  setReviewTab("datos");
+                  setReviewPhotoIndex(0);
                   setActionMenu(null);
                 }}
               >
@@ -552,26 +556,260 @@ export default function DispatchesPage() {
         </>
       )}
 
-      {review && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4" onKeyDown={e => {if (e.key === "Escape" && !savingPlate) setReview(null);}}>
-          <section role="dialog" aria-modal="true" aria-labelledby="plate-title" className="bg-white rounded-2xl w-full max-w-4xl p-5 max-h-[90vh] overflow-auto">
-            <div className="flex justify-between gap-3"><h2 id="plate-title" className="text-xl font-semibold">Validar datos · Despacho #{review.id}</h2><button className="btn btn-secondary" disabled={savingPlate} onClick={() => setReview(null)}>Cerrar</button></div>
-            <p className="text-sm text-slate-500 my-3">Compará la patente con las fotos. Podés abrir cada foto para ampliarla y corregir la lectura antes de confirmar.</p>
-            <div className="grid sm:grid-cols-2 gap-3">
-              {Array.from(new Set([...(review.photo_paths || []), review.photo_path].filter(Boolean))).map(url => <a key={url} href={url!} target="_blank" rel="noopener noreferrer"><img src={url!} alt="Foto del despacho para revisar la patente" className="w-full rounded-lg" /></a>)}
-            </div>
-            {!photoCount(review) && <p className="my-3 text-amber-700">Este despacho no tiene fotos. Confirmá únicamente si contás con otra evidencia.</p>}
-            {review.ai_vehicle_analysis?.plate_validation && <p className="text-sm my-3">Última validación: {review.ai_vehicle_analysis.plate_validation.validator} · {fmtDate(review.ai_vehicle_analysis.plate_validation.validated_at)}</p>}
-            <form onSubmit={e => {e.preventDefault(); savePlate();}} className="mt-4 space-y-3">
-              <label className="block" htmlFor="review-plate">Patente / dato confirmado</label>
-              <input autoFocus id="review-plate" className="input uppercase" value={plate} maxLength={20} onChange={e => setPlate(e.target.value)} placeholder="ABC123 o AB123CD" disabled={savingPlate} />
-              <p className={validPlate ? "text-sm text-green-700" : "text-sm text-amber-700"}>{validPlate ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.` : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}</p>
-              {reviewError && <p role="alert" className="text-red-700">{reviewError}</p>}
-              <button className="btn" disabled={!validPlate || savingPlate}>{savingPlate ? "Guardando…" : "Confirmar patente"}</button>
-            </form>
-          </section>
-        </div>
-      )}
+      {review && (() => {
+        const reviewPhotos = Array.from(
+          new Set([...(review.photo_paths || []), review.photo_path].filter(Boolean))
+        ) as string[];
+        const activePhoto = reviewPhotos[reviewPhotoIndex] || reviewPhotos[0];
+
+        const previousPhoto = () => {
+          if (!reviewPhotos.length) return;
+          setReviewPhotoIndex((index) =>
+            index === 0 ? reviewPhotos.length - 1 : index - 1
+          );
+        };
+
+        const nextPhoto = () => {
+          if (!reviewPhotos.length) return;
+          setReviewPhotoIndex((index) =>
+            index === reviewPhotos.length - 1 ? 0 : index + 1
+          );
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/55 flex items-center justify-center p-4"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !savingPlate) setReview(null);
+              if (reviewTab === "fotos" && e.key === "ArrowLeft") previousPhoto();
+              if (reviewTab === "fotos" && e.key === "ArrowRight") nextPhoto();
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="review-title"
+              className="bg-white rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h2 id="review-title" className="text-xl font-semibold">
+                    Validar datos · Despacho #{review.id}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Revisá los datos del despacho y comparalos con la evidencia fotográfica.
+                  </p>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  disabled={savingPlate}
+                  onClick={() => setReview(null)}
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <div className="border-b border-slate-200 px-5">
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setReviewTab("datos")}
+                    className={
+                      "border-b-2 px-4 py-3 text-sm font-medium transition " +
+                      (reviewTab === "datos"
+                        ? "border-slate-900 text-slate-900"
+                        : "border-transparent text-slate-500 hover:text-slate-800")
+                    }
+                  >
+                    Datos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReviewTab("fotos");
+                      setReviewPhotoIndex((index) =>
+                        index < reviewPhotos.length ? index : 0
+                      );
+                    }}
+                    className={
+                      "border-b-2 px-4 py-3 text-sm font-medium transition " +
+                      (reviewTab === "fotos"
+                        ? "border-slate-900 text-slate-900"
+                        : "border-transparent text-slate-500 hover:text-slate-800")
+                    }
+                  >
+                    Fotos
+                    <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                      {reviewPhotos.length}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {reviewTab === "datos" ? (
+                <div className="max-h-[72vh] overflow-auto p-5">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="rounded-xl border border-slate-200 p-4">
+                      <div className="text-xs text-slate-500">Inicio</div>
+                      <div className="mt-1 font-medium">
+                        {review.access_method === "rfid"
+                          ? "RFID"
+                          : review.access_method === "company_pin"
+                          ? "PIN empresa"
+                          : "Manual"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-4">
+                      <div className="text-xs text-slate-500">Camionero</div>
+                      <div className="mt-1 font-medium">
+                        {review.driver_name || "Sin identificar"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-4">
+                      <div className="text-xs text-slate-500">Empresa</div>
+                      <div className="mt-1 font-medium">
+                        {review.company_name || review.company_code || "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      savePlate();
+                    }}
+                    className="mt-5 space-y-3 rounded-xl border border-slate-200 p-4"
+                  >
+                    <div>
+                      <label className="block font-medium" htmlFor="review-plate">
+                        Patente
+                      </label>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Confirmá o corregí la patente usando las fotos como referencia.
+                      </p>
+                    </div>
+                    <input
+                      autoFocus
+                      id="review-plate"
+                      className="input uppercase"
+                      value={plate}
+                      maxLength={20}
+                      onChange={(e) => setPlate(e.target.value)}
+                      placeholder="ABC123 o AB123CD"
+                      disabled={savingPlate}
+                    />
+                    <p
+                      className={
+                        validPlate
+                          ? "text-sm text-green-700"
+                          : "text-sm text-amber-700"
+                      }
+                    >
+                      {validPlate
+                        ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.`
+                        : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}
+                    </p>
+                    {review.ai_vehicle_analysis?.plate_validation && (
+                      <p className="text-sm text-green-700">
+                        Última validación:{" "}
+                        {review.ai_vehicle_analysis.plate_validation.validator} ·{" "}
+                        {fmtDate(
+                          review.ai_vehicle_analysis.plate_validation.validated_at
+                        )}
+                      </p>
+                    )}
+                    {reviewError && (
+                      <p role="alert" className="text-red-700">
+                        {reviewError}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setReviewTab("fotos")}
+                        disabled={!reviewPhotos.length}
+                      >
+                        Ver fotos ({reviewPhotos.length})
+                      </button>
+                      <button className="btn" disabled={!validPlate || savingPlate}>
+                        {savingPlate ? "Guardando…" : "Confirmar datos"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                <div className="bg-slate-950">
+                  {reviewPhotos.length > 0 && activePhoto ? (
+                    <>
+                      <div className="relative flex h-[58vh] items-center justify-center p-5">
+                        <img
+                          src={activePhoto}
+                          alt={`Foto ${reviewPhotoIndex + 1} del despacho ${review.id}`}
+                          className="max-h-full max-w-full rounded-xl object-contain shadow-2xl"
+                        />
+
+                        {reviewPhotos.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              aria-label="Foto anterior"
+                              onClick={previousPhoto}
+                              className="absolute left-5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/95 text-2xl text-slate-900 shadow-lg hover:bg-white"
+                            >
+                              ‹
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Foto siguiente"
+                              onClick={nextPhoto}
+                              className="absolute right-5 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/95 text-2xl text-slate-900 shadow-lg hover:bg-white"
+                            >
+                              ›
+                            </button>
+                          </>
+                        )}
+
+                        <div className="absolute bottom-7 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-3 py-1 text-sm text-white">
+                          {reviewPhotoIndex + 1} / {reviewPhotos.length}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-white/10 bg-slate-900 px-5 py-4">
+                        <div className="flex gap-2 overflow-x-auto pb-1">
+                          {reviewPhotos.map((url, index) => (
+                            <button
+                              key={url}
+                              type="button"
+                              onClick={() => setReviewPhotoIndex(index)}
+                              className={
+                                "shrink-0 overflow-hidden rounded-lg border-2 transition " +
+                                (reviewPhotoIndex === index
+                                  ? "border-white"
+                                  : "border-transparent opacity-60 hover:opacity-100")
+                              }
+                            >
+                              <img
+                                src={url}
+                                alt={`Miniatura ${index + 1}`}
+                                className="h-16 w-24 object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex h-[58vh] items-center justify-center p-6 text-sm text-slate-300">
+                      Este despacho no tiene fotos.
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+        );
+      })()}
 
       {createOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
