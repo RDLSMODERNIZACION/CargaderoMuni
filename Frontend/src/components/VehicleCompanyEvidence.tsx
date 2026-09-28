@@ -1,4 +1,5 @@
 export type CompanyEvidence = {
+  company_assignment?: {source: string; plate: string; company_id: number; company_name: string};
   company_visible?: string | null;
   company_exclusion_reason?: string;
   company_suggested?: string | null;
@@ -30,6 +31,7 @@ export default function VehicleCompanyEvidence({analysis, expected}: {
     <div className="mt-1 font-semibold">{suggested || "Sin identificar"}</div>
     <p className={`mt-2 text-sm ${mismatch ? "text-red-700 font-medium" : "text-slate-600"}`} role={mismatch ? "alert" : undefined}>{label}</p>
     {analysis.company_exclusion_reason && <p className="mt-1 text-sm text-slate-600">El texto detectado está excluido como empresa sugerida.</p>}
+    {analysis.company_assignment && <p className="mt-2 text-sm text-green-700">Empresa autocompletada por patente confirmada: {analysis.company_assignment.company_name}</p>}
     {reference && <p className="mt-1 text-sm">Empresa de referencia: {reference}</p>}
     {!!analysis.visible_text?.length && <p className="mt-2 text-xs text-slate-500">Texto observado: {analysis.visible_text.join(" · ")}</p>}
     <p className="mt-2 text-xs text-slate-500">Sugerencia basada en logos o textos de las fotos. Requiere revisión; no modifica la asociación guardada.</p>

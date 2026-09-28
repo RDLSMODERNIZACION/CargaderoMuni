@@ -1,4 +1,5 @@
 """Verified plate associations and independent visual company evidence."""
+from datetime import datetime, timezone
 import re
 import unicodedata
 
@@ -98,3 +99,41 @@ async def find_association(cur, station_id, plate):
     ''', (station_id, plate))
     row = await cur.fetchone()
     return {'company_id': row[0], 'company_name': row[1], 'plate': row[2]} if row else None
+
+
+def autofill_registered_company(analysis, association, current_company_id, debited_at=None):
+    """Apply only a manually registered, station-authorized exact plate match.
+
+    The current photo still needs a reliable plate reading (or manual review).
+    This is an automatic assignment, never a fabricated human validation.
+    """
+    result = dict(analysis)
+    if result.get('company_validation'):
+        previous = result.pop('company_assignment', None)
+        if previous:
+            result['company_assignment_history'] = [*result.get('company_assignment_history', []), previous]
+        return result, current_company_id
+    if debited_at:
+        return result, current_company_id
+    if result.get('last_analysis_error'):
+        return result, current_company_id
+    plate = result.get('plate')
+    reviewed = (result.get('plate_validation') or {}).get('plate') == plate and bool(plate)
+    reliable = reviewed or float(result.get('plate_confidence') or 0) >= 0.9
+    matched = (association and association.get('plate') == plate and reliable)
+    previous = result.get('company_assignment')
+    if matched and previous and previous.get('plate') == plate and previous.get('company_id') == association['company_id']:
+        return result, association['company_id']
+    original_company_id = previous.get('previous_company_id') if previous else current_company_id
+    if previous:
+        result['company_assignment_history'] = [*result.get('company_assignment_history', []), previous]
+        result.pop('company_assignment', None)
+    if not matched:
+        return result, original_company_id
+    result['company_assignment'] = {
+        'source': 'confirmed_plate', 'plate': plate,
+        'company_id': association['company_id'], 'company_name': association['company_name'],
+        'previous_company_id': original_company_id,
+        'assigned_at': datetime.now(timezone.utc).isoformat(),
+    }
+    return result, association['company_id']

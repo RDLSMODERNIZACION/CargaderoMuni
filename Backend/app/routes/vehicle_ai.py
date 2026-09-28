@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from app.db import pool
 from app.auth import CurrentUser, get_current_user, require_station_access
 from app.services.vehicle_ai import analyze_dispatch_vehicle
-from app.services.vehicle_company import company_check, find_association
+from app.services.vehicle_company import company_check, find_association, autofill_registered_company
 
 router = APIRouter(prefix="/ai/vehicle", tags=["vehicle-ai"])
 
@@ -114,10 +114,11 @@ async def validate_plate(dispatch_id: int, body: PlateReview,
                 analysis["company_reviews"] = [*analysis.get("company_reviews", []), company_review]
                 await cur.execute("UPDATE public.water_dispatch SET company_id=%s WHERE id=%s", (body.company_id, dispatch_id))
             association = await find_association(cur, str(row[0]), body.plate)
-            await cur.execute("SELECT c.name FROM public.water_dispatch wd LEFT JOIN public.company c ON c.id=wd.company_id WHERE wd.id=%s", (dispatch_id,))
+            await cur.execute("SELECT c.name, wd.company_id, wd.debited_at FROM public.water_dispatch wd LEFT JOIN public.company c ON c.id=wd.company_id WHERE wd.id=%s", (dispatch_id,))
             company_row = await cur.fetchone()
+            analysis, assigned_company_id = autofill_registered_company(analysis, association, company_row[1], company_row[2])
             analysis = company_check(analysis, association, (analysis.get("company_validation") or {}).get("company_name"))
-            await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s WHERE id=%s", (Jsonb(analysis), dispatch_id))
+            await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s, company_id=%s WHERE id=%s", (Jsonb(analysis), assigned_company_id, dispatch_id))
     return {"ok": True, "analysis": analysis}
 
 

@@ -9,7 +9,7 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from app.db import pool
-from app.services.vehicle_company import company_check, find_association
+from app.services.vehicle_company import company_check, find_association, autofill_registered_company
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL", "gpt-5.4-mini")
@@ -271,7 +271,7 @@ async def analyze_dispatch_vehicle(dispatch_id: int) -> dict[str, Any]:
         async with conn.cursor() as cur:
             # Read again under lock: a human may have reviewed while the AI ran.
             await cur.execute("""
-                SELECT wd.ai_vehicle_analysis, wd.station_id, c.name
+                SELECT wd.ai_vehicle_analysis, wd.station_id, c.name, wd.company_id, wd.debited_at
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c ON c.id=wd.company_id
                 WHERE wd.id=%s FOR UPDATE OF wd
@@ -284,14 +284,15 @@ async def analyze_dispatch_vehicle(dispatch_id: int) -> dict[str, Any]:
                 # Keep the last evidence and all reviews on a transient failure.
                 result = {**saved, "last_analysis_error": result.get("error"),
                           "last_analysis_status": result.get("status")}
-            for key in ("plate_validation", "plate_reviews", "company_validation", "company_reviews"):
+            for key in ("plate_validation", "plate_reviews", "company_validation", "company_reviews", "company_assignment", "company_assignment_history"):
                 if key in saved:
                     result[key] = saved[key]
             if saved.get("plate_validation"):
                 result.update(plate=saved.get("plate"), plate_review_required=False)
             association = await find_association(cur, current[1], result.get("plate"))
+            result, assigned_company_id = autofill_registered_company(result, association, current[3], current[4])
             result = company_check(result, association, (result.get("company_validation") or {}).get("company_name"))
-            await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s WHERE id=%s",
-                              (Jsonb(result), dispatch_id))
+            await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s, company_id=%s WHERE id=%s",
+                              (Jsonb(result), assigned_company_id, dispatch_id))
 
     return result

@@ -150,11 +150,18 @@ export default function DispatchesPage() {
 
   async function analyzeReview() {
     if (!review || analyzing) return;
+    const originalPlate = review.ai_vehicle_analysis?.plate || "";
     setAnalyzing(true); setReviewError(""); setReviewSuccess("");
     try {
       const result = await apiJSON<{ok: boolean; analysis: VehicleAI}>(`/ai/vehicle/dispatch/${review.id}`, {method: "POST"});
       setReview(current => current?.id === review.id ? {...current, ai_vehicle_analysis: result.analysis} : current);
       setRows(previous => previous.map(row => row.id === review.id ? {...row, ai_vehicle_analysis: result.analysis} : row));
+      if (result.ok) {
+        setPlate(current => current === originalPlate ? result.analysis.plate || current : current);
+        await loadDispatches();
+        const assigned = result.analysis.company_assignment;
+        if (assigned) setReview(current => current?.id === review.id ? {...current, company_id: assigned.company_id, company_name: assigned.company_name} : current);
+      }
       if (!result.ok) setReviewError("No se pudo completar el análisis de las fotos. Revisá la configuración e intentá nuevamente.");
     } catch (e: any) { setReviewError(e.message || "No se pudo analizar"); }
     finally { setAnalyzing(false); }
@@ -168,7 +175,7 @@ export default function DispatchesPage() {
         method: "PATCH", body: JSON.stringify({plate: normalizedPlate,
           ...(reviewCompany ? {company_id: Number(reviewCompany), previous_company_id: association?.company_id || null} : {})}),
       });
-      const selected = reviewCompanies.find(c => c.id === Number(reviewCompany));
+      const selected = reviewCompanies.find(c => c.id === Number(reviewCompany)) || (result.analysis.company_assignment ? {id: result.analysis.company_assignment.company_id, name: result.analysis.company_assignment.company_name} : undefined);
       const updated = {...review, ai_vehicle_analysis: result.analysis,
         ...(selected ? {company_id: selected.id, company_name: selected.name} : {})};
       setRows(previous => previous.map(row => row.id === review.id ? updated : row));
@@ -385,6 +392,7 @@ export default function DispatchesPage() {
       header: "Empresa que carga",
       render: (r: DispatchItem) => <div>
         {r.company_name || r.company_code || "—"}
+        {r.ai_vehicle_analysis?.company_assignment && <div className="text-xs text-green-700">Autocompletada por patente</div>}
         {r.ai_vehicle_analysis?.plate_company && <div className="text-xs text-slate-500">Por patente: {r.ai_vehicle_analysis.plate_company.company_name}</div>}
         {(r.ai_vehicle_analysis?.company_suggested || r.ai_vehicle_analysis?.company_visible) && <div className="text-xs text-slate-500">IA: {r.ai_vehicle_analysis.company_suggested || r.ai_vehicle_analysis.company_visible}</div>}
         {r.ai_vehicle_analysis?.company_alert && <div className="text-xs font-medium text-red-700">Alerta de empresa</div>}

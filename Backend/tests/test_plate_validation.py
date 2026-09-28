@@ -20,7 +20,7 @@ class DB:
     async def fetchone(self):
         if 'SELECT station_id' in self.sql: return ('2',)
         if 'FROM public.vehicle_company pc' in self.sql: return None
-        if 'SELECT c.name' in self.sql: return ('Empresa',)
+        if 'SELECT c.name' in self.sql: return ('Empresa', None, None)
         return (self.analysis,)
 
 @pytest.fixture
