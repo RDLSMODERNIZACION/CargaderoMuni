@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import CurrentUser, accessible_station_ids, get_current_user
 from app.db import get_conn
+from app.services.dispatch_roles import RECIPIENT_COMPANY_SQL
 
 router = APIRouter(prefix="/kpi", tags=["kpi"])
 
@@ -72,7 +73,7 @@ def _build_where(
         params.append(organization_id)
 
     if company_id is not None:
-        where.append("wd.company_id = %s")
+        where.append(f"{RECIPIENT_COMPANY_SQL} = %s")
         params.append(company_id)
 
     if where:
@@ -139,7 +140,7 @@ async def kpi_summary(
         SELECT
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS total_liters,
           COUNT(*)::bigint AS dispatch_count,
-          COUNT(DISTINCT wd.company_id)::bigint AS companies_count,
+          COUNT(DISTINCT {RECIPIENT_COMPANY_SQL})::bigint AS companies_count,
           COUNT(DISTINCT wd.station_id)::bigint AS stations_count,
           CASE WHEN COUNT(*) > 0
             THEN COALESCE(SUM(COALESCE(wd.liters, 0)), 0) / COUNT(*)
@@ -151,9 +152,11 @@ async def kpi_summary(
           )::bigint AS ai_plate_count,
           COUNT(*) FILTER (
             WHERE (wd.ai_vehicle_analysis ->> 'matches_expected_company') = 'true'
+              AND (wd.ai_vehicle_analysis->'plate_company'->>'company_id' IS NOT NULL OR wd.ai_vehicle_analysis ? 'company_validation')
           )::bigint AS ai_company_match_count,
           COUNT(*) FILTER (
             WHERE (wd.ai_vehicle_analysis ->> 'matches_expected_company') = 'false'
+              AND (wd.ai_vehicle_analysis->'plate_company'->>'company_id' IS NOT NULL OR wd.ai_vehicle_analysis ? 'company_validation')
           )::bigint AS ai_company_mismatch_count
         FROM public.water_dispatch wd
         {where_sql}
@@ -224,15 +227,15 @@ async def kpi_by_company(
 
     sql = f"""
         SELECT
-          wd.company_id,
+          {RECIPIENT_COMPANY_SQL},
           c.name AS company_name,
           c.code AS company_code,
           COALESCE(SUM(COALESCE(wd.liters, 0)), 0) AS liters,
           COUNT(*)::bigint AS dispatch_count
         FROM public.water_dispatch wd
-        LEFT JOIN public.company c ON c.id = wd.company_id
+        LEFT JOIN public.company c ON c.id = {RECIPIENT_COMPANY_SQL}
         {where_sql}
-        GROUP BY wd.company_id, c.name, c.code
+        GROUP BY {RECIPIENT_COMPANY_SQL}, c.name, c.code
         ORDER BY liters DESC
         LIMIT %s
     """
@@ -499,7 +502,7 @@ async def kpi_day_dispatches(
         params.append(organization_id)
 
     if company_id is not None:
-        where.append("wd.company_id = %s")
+        where.append(f"{RECIPIENT_COMPANY_SQL} = %s")
         params.append(company_id)
 
     sql = f"""
@@ -512,14 +515,14 @@ async def kpi_day_dispatches(
           ) AS local_time,
           wd.station_id,
           s.name AS station_name,
-          wd.company_id,
+          {RECIPIENT_COMPANY_SQL},
           c.name AS company_name,
           c.code AS company_code,
           COALESCE(wd.liters, 0) AS liters,
           wd.ai_vehicle_analysis ->> 'plate' AS plate,
           wd.note
         FROM public.water_dispatch wd
-        LEFT JOIN public.company c ON c.id = wd.company_id
+        LEFT JOIN public.company c ON c.id = {RECIPIENT_COMPANY_SQL}
         LEFT JOIN public.station s ON s.id = wd.station_id
         WHERE {" AND ".join(where)}
         ORDER BY wd.ts ASC

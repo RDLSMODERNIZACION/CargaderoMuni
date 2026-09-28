@@ -116,7 +116,7 @@ async def validate_plate(dispatch_id: int, body: PlateReview,
             association = await find_association(cur, str(row[0]), body.plate)
             await cur.execute("SELECT c.name FROM public.water_dispatch wd LEFT JOIN public.company c ON c.id=wd.company_id WHERE wd.id=%s", (dispatch_id,))
             company_row = await cur.fetchone()
-            analysis = company_check(analysis, association, company_row[0] if company_row else None)
+            analysis = company_check(analysis, association, (analysis.get("company_validation") or {}).get("company_name"))
             await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s WHERE id=%s", (Jsonb(analysis), dispatch_id))
     return {"ok": True, "analysis": analysis}
 

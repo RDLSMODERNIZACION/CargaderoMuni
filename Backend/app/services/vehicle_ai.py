@@ -280,7 +280,7 @@ async def analyze_dispatch_vehicle(dispatch_id: int) -> dict[str, Any]:
             if saved.get("plate_validation"):
                 result.update(plate=saved.get("plate"), plate_review_required=False)
             association = await find_association(cur, current[1], result.get("plate"))
-            result = company_check(result, association, current[2])
+            result = company_check(result, association, (result.get("company_validation") or {}).get("company_name"))
             await cur.execute("UPDATE public.water_dispatch SET ai_vehicle_analysis=%s WHERE id=%s",
                               (Jsonb(result), dispatch_id))
 
