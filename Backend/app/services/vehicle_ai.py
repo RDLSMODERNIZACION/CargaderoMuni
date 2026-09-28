@@ -186,6 +186,8 @@ async def analyze_vehicle_images(
         "IVECO, Scania, Mercedes-Benz, Ford, Volvo, Volkswagen y otras marcas/modelos NO son empresas sugeridas. "
         "También excluye fabricantes de cisternas, acoplados y equipos (por ejemplo Randon o Econovo). "
         "Servicios Públicos, Econovo y Ecotrosa no deben devolverse como company_visible. "
+        "También excluye Rincón del Sauce, Rincón de los Sauces, sus variantes sin tilde, RDLS/MRDLS y referencias municipales que los contengan. "
+        "Esas referencias geográficas no deben sugerirse como empresa ni inferirse como propietarias. "
         "Un rótulo genérico como Servicios Públicos no identifica por sí solo una empresa ni una municipalidad. "
         "Si solo ves emblemas de fabricantes o modelos, company_visible=null y company_confidence=0. "
         "Ejemplo: IVECO y PARADA visibles => vehicle_manufacturer=IVECO, company_visible=PARADA. "
