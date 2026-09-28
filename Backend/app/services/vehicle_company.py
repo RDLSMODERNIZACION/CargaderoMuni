@@ -11,10 +11,50 @@ def company_key(value):
     return re.sub(r'[^A-Z0-9]', '', text)
 
 
+# Exact manufacturer names and badges with model names. Keep the raw extraction
+# for audit, but never use it as a recipient-company suggestion.
+TRUCK_MANUFACTURERS = (
+    "MERCEDES BENZ", "MERCEDES", "VOLKSWAGEN", "VW", "IVECO", "SCANIA",
+    "VOLVO", "FORD", "RENAULT", "MAN", "DAF", "FIAT", "CHEVROLET", "DODGE",
+    "INTERNATIONAL", "KENWORTH", "PETERBILT", "MACK", "HINO", "ISUZU",
+    "MITSUBISHI FUSO", "MITSUBISHI", "FUSO", "FOTON", "SHACMAN", "SINOTRUK",
+    "HOWO", "JAC", "JMC", "FAW", "DONGFENG", "DFSK", "HYUNDAI", "KIA",
+    "TATA", "ASHOK LEYLAND", "RANDON", "ECONOVO",
+)
+
+
+def manufacturer_only(value, detected_manufacturer=None):
+    key = company_key(value)
+    if not key:
+        return False
+    if detected_manufacturer and key == company_key(detected_manufacturer):
+        return True
+    text = unicodedata.normalize('NFKD', value or '').upper()
+    text = re.sub(r'[^A-Z0-9]+', ' ', text).strip()
+    for brand in TRUCK_MANUFACTURERS:
+        if key == company_key(brand):
+            return True
+        # A manufacturer followed by a model (e.g. IVECO TECTOR 170E) is
+        # vehicle information. Do not suppress explicit transport business names.
+        if text.startswith(brand + ' ') and not re.search(
+            r'\b(?:TRANSPORTES?|TRANSPORTE|LOGISTICA|SERVICIOS|DISTRIBUCION)\b', text
+        ):
+            return True
+    return False
+
+
 def company_check(analysis, association=None, expected_company=None):
     result = dict(analysis)
     visible = (analysis.get('company_visible') or '').strip()
     confidence = float(analysis.get('company_confidence') or 0)
+    if manufacturer_only(visible, analysis.get('vehicle_manufacturer')):
+        result['company_visible_raw'] = visible
+        result['company_confidence_raw'] = confidence
+        result['company_exclusion_reason'] = 'vehicle_manufacturer'
+        result['company_visible'] = None
+        result['company_confidence'] = 0
+        visible = ''
+        confidence = 0
     suggested = visible if visible and confidence >= 0.6 else None
     expected = association['company_name'] if association else expected_company
     status = 'no_evidence'
