@@ -1,5 +1,6 @@
 "use client";
 
+import VehicleCompanyEvidence, {CompanyEvidence} from "../../../../components/VehicleCompanyEvidence";
 import DispatchTimeConversion, {DispatchTiming} from "../../../../components/DispatchTimeConversion";
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -8,7 +9,7 @@ import { apiJSON } from "../../../../lib/api/api";
 import { useAuth } from "../../../../components/AuthContext";
 import { fmtDate, fmtLiters } from "../../../../lib/utils";
 
-type VehicleAI = {
+type VehicleAI = CompanyEvidence & {
   status?: string;
   plate?: string | null;
   plate_validation?: {validator: string; validated_at: string};
@@ -300,9 +301,9 @@ export default function DispatchDetailPage() {
 
   const companyCheck =
     ai.matches_expected_company === true
-      ? "Coincide con la empresa del PIN"
+      ? "Coincide con la empresa de referencia"
       : ai.matches_expected_company === false
-      ? "No coincide con la empresa del PIN"
+      ? "Alerta: no coincide con la empresa de referencia"
       : "Sin evidencia suficiente";
 
   const tabs = [
@@ -366,7 +367,7 @@ export default function DispatchDetailPage() {
               </div>
 
               <div>
-                <div className="text-xs text-slate-500">Empresa visible</div>
+                <div className="text-xs text-slate-500">Empresa sugerida por IA</div>
                 <div className="font-semibold">{ai.company_visible || "—"}</div>
                 {ai.company_visible && (
                   <div className="text-xs text-slate-500 mt-1">
@@ -375,6 +376,7 @@ export default function DispatchDetailPage() {
                 )}
               </div>
 
+              <VehicleCompanyEvidence analysis={ai} />
               <StatusPill ok={ai.matches_expected_company}>
                 {companyCheck}
               </StatusPill>
@@ -466,7 +468,7 @@ export default function DispatchDetailPage() {
                 )}
               </div>
               <div>
-                <div className="text-xs text-slate-500">Empresa visible</div>
+                <div className="text-xs text-slate-500">Empresa sugerida por IA</div>
                 <div className="font-medium">
                   {ai.company_visible || "—"} · {pct(ai.company_confidence)}
                 </div>
