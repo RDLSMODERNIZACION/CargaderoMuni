@@ -6,13 +6,14 @@ import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { fmtDate, fmtLiters } from "../../../lib/utils";
 import { apiJSON } from "../../../lib/api/api";
+import VehicleCompanyEvidence, {CompanyEvidence} from "../../../components/VehicleCompanyEvidence";
 import { useAuth } from "../../../components/AuthContext";
 
 const DataTable = dynamic(() => import("../../../components/DataTable"), { ssr: false }) as any;
 
 type Column<T> = any;
 
-type VehicleAI = {
+type VehicleAI = CompanyEvidence & {
   plate?: string | null;
   plate_validation?: { validator: string; validated_at: string };
 };
@@ -77,6 +78,14 @@ export default function DispatchesPage() {
   const [review, setReview] = useState<DispatchItem | null>(null);
   const [plate, setPlate] = useState("");
   const [savingPlate, setSavingPlate] = useState(false);
+  const [reviewCompany, setReviewCompany] = useState("");
+  const [reviewCompanies, setReviewCompanies] = useState<Array<{id: number; name: string}>>([]);
+  const [association, setAssociation] = useState<CompanyEvidence["plate_company"]>(null);
+  const [companyContextLoading, setCompanyContextLoading] = useState(false);
+  const [companyContextError, setCompanyContextError] = useState("");
+  const [replaceAssociation, setReplaceAssociation] = useState(false);
+  const [reviewSuccess, setReviewSuccess] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
   const [reviewError, setReviewError] = useState("");
   const [reviewTab, setReviewTab] = useState<"datos" | "fotos">("datos");
   const [reviewPhotoIndex, setReviewPhotoIndex] = useState(0);
@@ -117,15 +126,51 @@ export default function DispatchesPage() {
   }
   const normalizedPlate = plate.toUpperCase().replace(/[\s-]/g, "");
   const validPlate = /^(?:[A-Z]{3}[0-9]{3}|[A-Z]{2}[0-9]{3}[A-Z]{2})$/.test(normalizedPlate);
+  useEffect(() => {
+    let cancelled = false;
+    setReviewSuccess(""); setReplaceAssociation(false); setCompanyContextError("");
+    setAssociation(null); setReviewCompanies([]); setReviewCompany("");
+    if (!review) return;
+    setCompanyContextLoading(true);
+    apiJSON<{association: CompanyEvidence["plate_company"]; companies: Array<{id: number; name: string}>}>(
+      `/ai/vehicle/dispatch/${review.id}/company-context?plate=${encodeURIComponent(validPlate ? normalizedPlate : "")}`
+    ).then(data => {
+      if (cancelled) return;
+      setAssociation(data.association); setReviewCompanies(data.companies);
+      setReviewCompany(String(data.association?.company_id || review.company_id || ""));
+    }).catch(e => { if (!cancelled) setCompanyContextError(e.message || "No se pudo consultar la asociación"); })
+      .finally(() => { if (!cancelled) setCompanyContextLoading(false); });
+    return () => { cancelled = true; };
+  }, [review?.id, normalizedPlate, validPlate]);
+
+  const replacingCompany = !!(association && reviewCompany && Number(reviewCompany) !== association.company_id);
+
+  async function analyzeReview() {
+    if (!review || analyzing) return;
+    setAnalyzing(true); setReviewError(""); setReviewSuccess("");
+    try {
+      const result = await apiJSON<{ok: boolean; analysis: VehicleAI}>(`/ai/vehicle/dispatch/${review.id}`, {method: "POST"});
+      setReview(current => current?.id === review.id ? {...current, ai_vehicle_analysis: result.analysis} : current);
+      setRows(previous => previous.map(row => row.id === review.id ? {...row, ai_vehicle_analysis: result.analysis} : row));
+      if (!result.ok) setReviewError("No se pudo completar el análisis de las fotos. Revisá la configuración e intentá nuevamente.");
+    } catch (e: any) { setReviewError(e.message || "No se pudo analizar"); }
+    finally { setAnalyzing(false); }
+  }
+
   async function savePlate() {
-    if (!review || !validPlate || savingPlate) return;
+    if (!review || !validPlate || savingPlate || analyzing || companyContextLoading || companyContextError || (replacingCompany && !replaceAssociation)) return;
     setSavingPlate(true); setReviewError("");
     try {
       const result = await apiJSON<{ok: boolean; analysis: VehicleAI}>(`/ai/vehicle/dispatch/${review.id}/plate`, {
-        method: "PATCH", body: JSON.stringify({plate: normalizedPlate}),
+        method: "PATCH", body: JSON.stringify({plate: normalizedPlate,
+          ...(reviewCompany ? {company_id: Number(reviewCompany), previous_company_id: association?.company_id || null} : {})}),
       });
-      setRows(previous => previous.map(row => row.id === review.id ? {...row, ai_vehicle_analysis: result.analysis} : row));
-      setReview(null);
+      const selected = reviewCompanies.find(c => c.id === Number(reviewCompany));
+      const updated = {...review, ai_vehicle_analysis: result.analysis,
+        ...(selected ? {company_id: selected.id, company_name: selected.name} : {})};
+      setRows(previous => previous.map(row => row.id === review.id ? updated : row));
+      setReview(updated); setAssociation(result.analysis.plate_company || null); setReplaceAssociation(false);
+      setReviewSuccess(result.analysis.company_alert ? "Datos guardados. La alerta de empresa sigue pendiente de revisión." : "Datos guardados.");
     } catch (e: any) { setReviewError(e.message || "No se pudo guardar la patente"); }
     finally { setSavingPlate(false); }
   }
@@ -335,7 +380,12 @@ export default function DispatchesPage() {
     {
       key: "company",
       header: "Empresa",
-      render: (r: DispatchItem) => r.company_name || r.company_code || "—",
+      render: (r: DispatchItem) => <div>
+        {r.company_name || r.company_code || "—"}
+        {r.ai_vehicle_analysis?.plate_company && <div className="text-xs text-slate-500">Por patente: {r.ai_vehicle_analysis.plate_company.company_name}</div>}
+        {(r.ai_vehicle_analysis?.company_suggested || r.ai_vehicle_analysis?.company_visible) && <div className="text-xs text-slate-500">IA: {r.ai_vehicle_analysis.company_suggested || r.ai_vehicle_analysis.company_visible}</div>}
+        {r.ai_vehicle_analysis?.company_alert && <div className="text-xs font-medium text-red-700">Alerta de empresa</div>}
+      </div>,
     },
     {
       key: "access_method", header: "Inicio",
@@ -713,6 +763,21 @@ export default function DispatchesPage() {
                         ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.`
                         : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}
                     </p>
+                    <label className="block font-medium" htmlFor="review-company">Empresa asociada a la patente</label>
+                    <select id="review-company" className="input" value={reviewCompany}
+                      disabled={savingPlate || analyzing || companyContextLoading || !!companyContextError}
+                      onChange={e => { setReviewCompany(e.target.value); setReplaceAssociation(false); setReviewSuccess(""); }}>
+                      <option value="">Validar solo patente · conservar empresa</option>
+                      {reviewCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <p className="text-xs text-slate-500">Al confirmar, se guarda para próximas cargas de esta organización y se asigna la empresa a este despacho. No modifica despachos anteriores.</p>
+                    {companyContextLoading && <p className="text-sm text-slate-500">Consultando asociación…</p>}
+                    {companyContextError && <p role="alert" className="text-red-700">{companyContextError}</p>}
+                    {association && <p className="text-sm">Asociación guardada: {association.plate} → {association.company_name}</p>}
+                    {replacingCompany && <label className="flex gap-2 text-sm text-amber-800"><input type="checkbox" checked={replaceAssociation} onChange={e => setReplaceAssociation(e.target.checked)} disabled={savingPlate || analyzing} />Confirmo reemplazar la empresa asociada a esta patente.</label>}
+                    <VehicleCompanyEvidence analysis={review.ai_vehicle_analysis || {}} expected={reviewCompanies.find(c => c.id === Number(reviewCompany))?.name || association?.company_name || review.company_name || null} />
+                    <button type="button" className="btn btn-secondary" disabled={analyzing || savingPlate || !reviewPhotos.length} onClick={analyzeReview}>{analyzing ? "Analizando fotos…" : "Analizar empresa con IA"}</button>
+                    {reviewSuccess && <p role="status" className="text-sm text-green-700">{reviewSuccess}</p>}
                     {review.ai_vehicle_analysis?.plate_validation && (
                       <p className="text-sm text-green-700">
                         Última validación:{" "}
@@ -736,7 +801,7 @@ export default function DispatchesPage() {
                       >
                         Ver fotos ({reviewPhotos.length})
                       </button>
-                      <button className="btn" disabled={!validPlate || savingPlate}>
+                      <button className="btn" disabled={!validPlate || savingPlate || analyzing || companyContextLoading || !!companyContextError || (replacingCompany && !replaceAssociation)}>
                         {savingPlate ? "Guardando…" : "Confirmar datos"}
                       </button>
                     </div>

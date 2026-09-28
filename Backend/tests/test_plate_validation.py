@@ -18,7 +18,10 @@ class DB:
         self.sql = sql
         if sql.startswith('UPDATE'): self.saved = params[0].obj
     async def fetchone(self):
-        return ('2',) if 'SELECT station_id' in self.sql else (self.analysis,)
+        if 'SELECT station_id' in self.sql: return ('2',)
+        if 'FROM public.vehicle_company pc' in self.sql: return None
+        if 'SELECT c.name' in self.sql: return ('Empresa',)
+        return (self.analysis,)
 
 @pytest.fixture
 def setup(monkeypatch):
