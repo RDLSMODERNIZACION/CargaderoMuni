@@ -44,7 +44,32 @@ def test_user_excluded_labels_never_suggest_or_alert(label):
     assert result['plate_company'] == ASSOCIATION
 
 
-def test_full_municipal_name_is_not_a_generic_department_label():
+def test_rincon_municipal_reference_is_also_excluded():
     name = 'Municipalidad de Rincón de los Sauces / Obras y Servicios Públicos'
     result = company_check({'company_visible': name, 'company_confidence': .9})
-    assert result['company_suggested'] == name
+    assert result['company_suggested'] is None
+
+
+@pytest.mark.parametrize('label', [
+    'Rincón del Sauce', 'Rincon de los Sauces', 'RINCÓN DE LOS SAUCES',
+    'Municipalidad de Rincón de los Sauces',
+    'Municipalidad de Rincon de los Sauces / Obras y Servicios Publicos',
+    'Rincón de los Sauce', 'Rincon del Sauces', 'Rincon los Sauces',
+    'RDLS', 'M.R.D.L.S.', 'R.D.L.S.', 'Municipalidad RDLS',
+])
+def test_geographic_and_municipal_references_are_not_companies(label):
+    result=company_check({'company_visible':label,'company_confidence':.99},ASSOCIATION)
+    assert result['company_suggested'] is None
+    assert result['company_alert'] is False
+    assert result['company_visible_raw']==label
+    assert result['plate_company']==ASSOCIATION
+
+
+def test_unrelated_company_and_manually_confirmed_municipality_are_preserved():
+    municipal={'company_id':5,'company_name':'Municipalidad de Rincón de los Sauces','plate':'AH303IF'}
+    result=company_check({'company_visible':'Rincón del Sauce','company_confidence':.99},municipal)
+    assert result['plate_company']==municipal
+    assert result['company_expected']==municipal['company_name']
+    result=company_check({'company_visible':'Parada','company_confidence':.99},ASSOCIATION)
+    assert result['company_suggested']=='Parada'
+    assert result['company_alert'] is False

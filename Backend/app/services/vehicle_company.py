@@ -47,11 +47,22 @@ def manufacturer_only(value, detected_manufacturer=None):
 EXCLUDED_COMPANY_LABELS = {"SERVICIOSPUBLICOS", "ECOTROSA"}
 
 
+def excluded_company_label(value):
+    if company_key(value) in EXCLUDED_COMPANY_LABELS:
+        return True
+    text = unicodedata.normalize('NFKD', value or '')
+    text = ''.join(c for c in text if not unicodedata.combining(c)).upper()
+    text = re.sub(r'[^A-Z0-9]+', ' ', text).strip()
+    # Geographic/municipal references are explicitly excluded by the operator.
+    return bool(re.search(r'\bRINCON (?:(?:DE LOS|DEL|DE|LOS) )?SAUCES?\b', text)
+                or re.search(r'\b(?:M ?)?R ?D ?L ?S\b', text))
+
+
 def company_check(analysis, association=None, expected_company=None):
     result = dict(analysis)
     visible = (analysis.get('company_visible') or '').strip()
     confidence = float(analysis.get('company_confidence') or 0)
-    exclusion = ('non_company_label' if company_key(visible) in EXCLUDED_COMPANY_LABELS
+    exclusion = ('non_company_label' if excluded_company_label(visible)
                  else 'vehicle_manufacturer' if manufacturer_only(visible, analysis.get('vehicle_manufacturer')) else None)
     if exclusion:
         result['company_visible_raw'] = visible
