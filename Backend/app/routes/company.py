@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Literal
 
 from app.auth import CurrentUser, require_admin
 from app.db import pool
@@ -21,6 +21,7 @@ class CompanyPatch(BaseModel):
 
 
 class DriverIn(BaseModel):
+    person_role: Literal["driver", "loading_staff"] = "driver"
     name: str
     document_number: Optional[str] = None
     phone: Optional[str] = None
@@ -30,6 +31,7 @@ class DriverIn(BaseModel):
 
 
 class DriverPatch(BaseModel):
+    person_role: Literal["driver", "loading_staff"] = "driver"
     name: Optional[str] = None
     document_number: Optional[str] = None
     phone: Optional[str] = None
@@ -205,7 +207,8 @@ async def list_company_drivers(company_id: int):
                     cred.value,
                     cred.active,
                     cred.valid_from,
-                    cred.valid_until
+                    cred.valid_until,
+                    u.person_role
                 FROM public.pin_user u
                 LEFT JOIN LATERAL (
                     SELECT ac.id, ac.value, ac.active, ac.valid_from, ac.valid_until
@@ -238,6 +241,7 @@ async def list_company_drivers(company_id: int):
                 "rfid_active": r[9] if r[7] is not None else None,
                 "rfid_valid_from": r[10],
                 "rfid_valid_until": r[11],
+                "person_role": r[12],
             }
             for r in rows
         ],
@@ -248,7 +252,7 @@ async def list_company_drivers(company_id: int):
 async def create_company_driver(company_id: int, body: DriverIn, _user: CurrentUser = Depends(require_admin)):
     name = body.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="El nombre del camionero es obligatorio")
+        raise HTTPException(status_code=400, detail="El nombre de la persona es obligatorio")
 
     rfid_uid = _normalize_rfid(body.rfid_uid)
 
@@ -265,8 +269,8 @@ async def create_company_driver(company_id: int, body: DriverIn, _user: CurrentU
                 await cur.execute(
                     """
                     INSERT INTO public.pin_user
-                        (name, company_id, document_number, phone, printed_card_code, enabled, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, now())
+                        (name, company_id, document_number, phone, printed_card_code, enabled, person_role, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, now())
                     RETURNING id
                     """,
                     (
@@ -276,6 +280,7 @@ async def create_company_driver(company_id: int, body: DriverIn, _user: CurrentU
                         body.phone.strip() if body.phone else None,
                         body.printed_card_code.strip() if body.printed_card_code else None,
                         body.enabled,
+                        body.person_role,
                     ),
                 )
                 row = await cur.fetchone()
@@ -301,7 +306,7 @@ async def create_company_driver(company_id: int, body: DriverIn, _user: CurrentU
                         (driver_id, rfid_uid, f"RFID · {name}"),
                     )
             except Exception as e:
-                raise HTTPException(status_code=400, detail=f"No se pudo crear el camionero: {e}")
+                raise HTTPException(status_code=400, detail=f"No se pudo crear la persona: {e}")
 
     return {"ok": True, "id": driver_id, "device_employee_no": f"DRIVER-{driver_id}"}
 
@@ -312,10 +317,13 @@ async def update_company_driver(company_id: int, driver_id: int, body: DriverPat
     fields = []
     params = []
 
+    if "person_role" in payload:
+        fields.append("person_role = %s")
+        params.append(payload["person_role"])
     if "name" in payload:
         name = (payload["name"] or "").strip()
         if not name:
-            raise HTTPException(status_code=400, detail="El nombre del camionero es obligatorio")
+            raise HTTPException(status_code=400, detail="El nombre de la persona es obligatorio")
         fields.append("name = %s")
         params.append(name)
     if "document_number" in payload:

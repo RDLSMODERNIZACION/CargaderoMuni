@@ -30,6 +30,9 @@ type DispatchItem = {
   company_id?: number | null;
   company_name?: string | null;
   driver_name?: string | null;
+  person_role?: "driver" | "loading_staff" | null;
+  person_company_name?: string | null;
+  load_mode?: "assisted" | "self_service" | "unknown";
   access_method?: string | null;
   company_code?: string | null;
   ai_vehicle_analysis?: VehicleAI | null;
@@ -379,7 +382,7 @@ export default function DispatchesPage() {
     },
     {
       key: "company",
-      header: "Empresa",
+      header: "Empresa que carga",
       render: (r: DispatchItem) => <div>
         {r.company_name || r.company_code || "—"}
         {r.ai_vehicle_analysis?.plate_company && <div className="text-xs text-slate-500">Por patente: {r.ai_vehicle_analysis.plate_company.company_name}</div>}
@@ -392,8 +395,12 @@ export default function DispatchesPage() {
       render: (r: DispatchItem) => ({rfid: r.driver_name ? "RFID" : "RFID · sin identificar", manual: "Manual", company_pin: "PIN empresa"}[r.access_method || ""] || "Sin identificar"),
     },
     {
-      key: "driver_name", header: "Camionero",
-      render: (r: DispatchItem) => r.driver_name || "Sin identificar",
+      key: "driver_name", header: "Persona",
+      render: (r: DispatchItem) => <div>{r.driver_name || "Sin identificar"}{r.person_company_name && <div className="text-xs text-slate-500">{r.person_company_name}</div>}</div>,
+    },
+    {
+      key: "person_role", header: "Tipo de carga",
+      render: (r: DispatchItem) => r.person_role === "loading_staff" ? "Carga asistida" : r.person_role === "driver" ? "Autoservicio" : "Sin clasificar",
     },
     {
       key: "plate",
@@ -714,15 +721,17 @@ export default function DispatchesPage() {
                       </div>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-4">
-                      <div className="text-xs text-slate-500">Camionero</div>
+                      <div className="text-xs text-slate-500">Persona</div>
                       <div className="mt-1 font-medium">
                         {review.driver_name || "Sin identificar"}
+                        {review.person_company_name && <div className="text-xs text-slate-500">Empresa de la persona: {review.person_company_name}</div>}
+                        <div className="text-xs text-slate-500">{review.person_role === "loading_staff" ? "Despachante · Carga asistida" : review.person_role === "driver" ? "Camionero · Autoservicio" : "Carga sin clasificar"}</div>
                       </div>
                     </div>
                     <div className="rounded-xl border border-slate-200 p-4">
-                      <div className="text-xs text-slate-500">Empresa</div>
+                      <div className="text-xs text-slate-500">Empresa que recibe el agua</div>
                       <div className="mt-1 font-medium">
-                        {review.company_name || review.company_code || "—"}
+                        {review.company_name || review.company_code || "Pendiente de identificar"}
                       </div>
                     </div>
                   </div>
@@ -763,7 +772,8 @@ export default function DispatchesPage() {
                         ? `Formato válido: ${normalizedPlate}. Confirmá que coincida con el camión.`
                         : "Ingresá una patente de auto o camión: ABC123 o AB123CD."}
                     </p>
-                    <label className="block font-medium" htmlFor="review-company">Empresa asociada a la patente</label>
+                    <label className="block font-medium" htmlFor="review-company">Empresa del camión / destinataria del agua</label>
+                    {review.person_role === "loading_staff" && <p className="text-sm text-slate-600">Carga asistida: seleccioná la empresa del camión. La empresa del despachante se conserva por separado y no se compara con el logo.</p>}
                     <select id="review-company" className="input" value={reviewCompany}
                       disabled={savingPlate || analyzing || companyContextLoading || !!companyContextError}
                       onChange={e => { setReviewCompany(e.target.value); setReplaceAssociation(false); setReviewSuccess(""); }}>

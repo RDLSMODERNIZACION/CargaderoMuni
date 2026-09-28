@@ -39,6 +39,7 @@ type Driver = {
 };
 
 type DriverForm = {
+  person_role: "driver" | "loading_staff";
   name: string;
   document_number: string;
   phone: string;
@@ -54,6 +55,7 @@ const emptyCompanyForm: CompanyForm = {
 };
 
 const emptyDriverForm: DriverForm = {
+  person_role: "driver",
   name: "",
   document_number: "",
   phone: "",
@@ -118,7 +120,7 @@ export default function UsersPage() {
       setDrivers(Array.isArray(res?.items) ? res.items : []);
     } catch (e: any) {
       setDrivers([]);
-      setError(e?.message ?? "Error cargando camioneros");
+      setError(e?.message ?? "Error cargando personas");
     } finally {
       setDriversLoading(false);
     }
@@ -327,7 +329,7 @@ export default function UsersPage() {
 
   async function saveDriver() {
     if (!selected || !driverForm.name.trim()) {
-      setError("El nombre del camionero es obligatorio.");
+      setError("El nombre de la persona es obligatorio.");
       return;
     }
 
@@ -338,6 +340,7 @@ export default function UsersPage() {
         method: "POST",
         body: JSON.stringify({
           name: driverForm.name.trim(),
+          person_role: driverForm.person_role,
           document_number: driverForm.document_number.trim() || null,
           phone: driverForm.phone.trim() || null,
           rfid_uid: driverForm.rfid_uid.trim() || null,
@@ -348,7 +351,7 @@ export default function UsersPage() {
       setDriverForm(emptyDriverForm);
       await loadDrivers(selected.id);
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo guardar el camionero");
+      setError(e?.message ?? "No se pudo guardar la persona");
     } finally {
       setDriverSaving(false);
     }
@@ -364,14 +367,14 @@ export default function UsersPage() {
       });
       await loadDrivers(selected.id);
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo actualizar el camionero");
+      setError(e?.message ?? "No se pudo actualizar la persona");
     }
   }
 
   async function deleteDriver(driver: Driver) {
     if (!selected) return;
     const ok = window.confirm(
-      "¿Eliminar al camionero \"" + driver.name + "\"? Su RFID dejará de estar asociada."
+      "¿Eliminar a la persona \"" + driver.name + "\"? Su RFID dejará de estar asociada."
     );
     if (!ok) return;
 
@@ -382,7 +385,7 @@ export default function UsersPage() {
       });
       await loadDrivers(selected.id);
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo eliminar el camionero");
+      setError(e?.message ?? "No se pudo eliminar la persona");
     }
   }
 
@@ -491,7 +494,7 @@ export default function UsersPage() {
           <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl p-5 shadow-xl">
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>
-                <h2 className="text-xl font-semibold">Agregar camionero</h2>
+                <h2 className="text-xl font-semibold">Agregar persona</h2>
                 <p className="text-sm text-slate-500 mt-1">
                   Empresa: <b>{selected.name}</b>. La RFID se puede cargar ahora o dejar pendiente para leerla mañana.
                 </p>
@@ -506,6 +509,14 @@ export default function UsersPage() {
             </div>
 
             <div className="grid gap-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="person-role" className="text-xs text-slate-500">Tipo de persona</label>
+                <select id="person-role" className="select" value={driverForm.person_role}
+                  onChange={(e) => setDriverForm((p) => ({ ...p, person_role: e.target.value as DriverForm["person_role"] }))}>
+                  <option value="driver">Camionero</option>
+                  <option value="loading_staff">Despachante / Personal de carga</option>
+                </select>
+              </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-slate-500">Nombre y apellido *</label>
                 <input
@@ -563,7 +574,7 @@ export default function UsersPage() {
                     setDriverForm((p) => ({ ...p, enabled: e.target.checked }))
                   }
                 />
-                <span className="text-sm">Camionero habilitado</span>
+                <span className="text-sm">Persona habilitada</span>
               </label>
             </div>
 
@@ -576,7 +587,7 @@ export default function UsersPage() {
                 Cancelar
               </button>
               <button className="btn" onClick={saveDriver} disabled={driverSaving}>
-                {driverSaving ? "Guardando…" : "Guardar camionero"}
+                {driverSaving ? "Guardando…" : "Guardar persona"}
               </button>
             </div>
           </div>

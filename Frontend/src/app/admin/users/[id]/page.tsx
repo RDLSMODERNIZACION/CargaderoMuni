@@ -16,7 +16,10 @@ type Company = {
   active: boolean;
 };
 
+type PersonRole = "driver" | "loading_staff";
+
 type Driver = {
+  person_role?: PersonRole;
   id: number;
   name: string;
   document_number?: string | null;
@@ -29,6 +32,7 @@ type Driver = {
 };
 
 type DriverForm = {
+  person_role: PersonRole;
   name: string;
   document_number: string;
   phone: string;
@@ -38,6 +42,7 @@ type DriverForm = {
 };
 
 const emptyDriverForm: DriverForm = {
+  person_role: "driver",
   name: "",
   document_number: "",
   phone: "",
@@ -108,6 +113,7 @@ export default function CompanyDetailPage() {
     setEditingDriver(driver);
     setDriverForm({
       name: driver.name || "",
+      person_role: driver.person_role || "driver",
       document_number: driver.document_number || "",
       phone: driver.phone || "",
       rfid_uid: driver.rfid_uid || "",
@@ -119,7 +125,7 @@ export default function CompanyDetailPage() {
 
   async function saveDriver() {
     if (!company || !driverForm.name.trim()) {
-      setError("El nombre del camionero es obligatorio.");
+      setError("El nombre de la persona es obligatorio.");
       return;
     }
 
@@ -129,9 +135,11 @@ export default function CompanyDetailPage() {
     try {
       const payload = {
         name: driverForm.name.trim(),
+        person_role: driverForm.person_role,
         document_number: driverForm.document_number.trim() || null,
         phone: driverForm.phone.trim() || null,
-        rfid_uid: driverForm.rfid_uid.trim() || null,
+        ...(!editingDriver || (editingDriver.rfid_uid || "").trim() !== driverForm.rfid_uid.trim()
+          ? { rfid_uid: driverForm.rfid_uid.trim() || null } : {}),
         printed_card_code: driverForm.printed_card_code.trim() || null,
         enabled: driverForm.enabled,
       };
@@ -151,7 +159,7 @@ export default function CompanyDetailPage() {
       setDriverForm(emptyDriverForm);
       await loadDrivers();
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo guardar el camionero");
+      setError(e?.message ?? "No se pudo guardar la persona");
     } finally {
       setDriverSaving(false);
     }
@@ -167,14 +175,14 @@ export default function CompanyDetailPage() {
       });
       await loadDrivers();
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo actualizar el camionero");
+      setError(e?.message ?? "No se pudo actualizar la persona");
     }
   }
 
   async function deleteDriver(driver: Driver) {
     if (!company) return;
     const ok = window.confirm(
-      '¿Eliminar al camionero "' + driver.name + '"? Su RFID dejará de estar asociada.'
+      '¿Eliminar a la persona "' + driver.name + '"? Su RFID dejará de estar asociada.'
     );
     if (!ok) return;
 
@@ -185,7 +193,7 @@ export default function CompanyDetailPage() {
       });
       await loadDrivers();
     } catch (e: any) {
-      setError(e?.message ?? "No se pudo eliminar el camionero");
+      setError(e?.message ?? "No se pudo eliminar la persona");
     }
   }
 
@@ -223,7 +231,7 @@ export default function CompanyDetailPage() {
       },
       {
         key: "camioneros",
-        label: "Camioneros y RFID",
+        label: "Personas y RFID",
         badge: (
           <span className="badge bg-slate-100 text-slate-700">
             {drivers.length}
@@ -233,30 +241,30 @@ export default function CompanyDetailPage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div>
-                <h2 className="text-lg font-semibold">Camioneros habilitados</h2>
+                <h2 className="text-lg font-semibold">Personas habilitadas</h2>
                 <p className="text-sm text-slate-500 mt-1">
-                  Cada camionero queda asociado a esta empresa y a su RFID.
+                  Camioneros y personal de carga asociados a esta empresa y a su RFID.
                 </p>
               </div>
               {canAdmin && (
                 <button className="btn" onClick={openCreateDriver}>
-                  + Agregar camionero
+                  + Agregar persona
                 </button>
               )}
             </div>
 
             {driversLoading ? (
-              <div className="text-sm text-slate-500">Cargando camioneros…</div>
+              <div className="text-sm text-slate-500">Cargando personas…</div>
             ) : drivers.length === 0 ? (
               <div className="card text-sm text-slate-500">
-                Todavía no hay camioneros registrados para esta empresa.
+                Todavía no hay personas registradas para esta empresa.
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-200">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
-                      <th className="text-left font-medium px-4 py-3">Camionero</th>
+                      <th className="text-left font-medium px-4 py-3">Persona</th>
                       <th className="text-left font-medium px-4 py-3">DNI</th>
                       <th className="text-left font-medium px-4 py-3">Teléfono</th>
                       <th className="text-left font-medium px-4 py-3">RFID / UID</th>
@@ -268,7 +276,7 @@ export default function CompanyDetailPage() {
                   <tbody className="divide-y divide-slate-200">
                     {drivers.map((driver) => (
                       <tr key={driver.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium">{driver.name}</td>
+                        <td className="px-4 py-3 font-medium">{driver.name}<div className="mt-1 text-xs font-normal text-slate-500">{driver.person_role === "loading_staff" ? "Despachante / Personal de carga" : "Camionero"}</div></td>
                         <td className="px-4 py-3 text-slate-600">
                           {driver.document_number || "—"}
                         </td>
@@ -352,7 +360,7 @@ export default function CompanyDetailPage() {
           </button>
           <h1 className="text-2xl font-bold">{company.name}</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Empresa {company.code} · camioneros y credenciales RFID
+            Empresa {company.code} · personas y credenciales RFID
           </p>
         </div>
       </header>
@@ -373,7 +381,7 @@ export default function CompanyDetailPage() {
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>
                 <h2 className="text-xl font-semibold">
-                  {editingDriver ? "Editar camionero" : "Agregar camionero"}
+                  {editingDriver ? "Editar persona" : "Agregar persona"}
                 </h2>
                 <p className="text-sm text-slate-500 mt-1">
                   Empresa: <b>{company.name}</b>
@@ -393,6 +401,15 @@ export default function CompanyDetailPage() {
             </div>
 
             <div className="grid gap-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="person-role" className="text-xs text-slate-500">Tipo de persona</label>
+                <select id="person-role" className="select" value={driverForm.person_role}
+                  onChange={(e) => setDriverForm((p) => ({ ...p, person_role: e.target.value as PersonRole }))}>
+                  <option value="driver">Camionero</option>
+                  <option value="loading_staff">Despachante / Personal de carga</option>
+                </select>
+                <p className="text-xs text-slate-500">Clasificación interna. Los despachos identificados con esta persona se registran como {driverForm.person_role === "loading_staff" ? "carga asistida" : "autoservicio"}.</p>
+              </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-slate-500">Nombre y apellido *</label>
                 <input
@@ -463,7 +480,7 @@ export default function CompanyDetailPage() {
                     setDriverForm((p) => ({ ...p, enabled: e.target.checked }))
                   }
                 />
-                <span className="text-sm">Camionero habilitado</span>
+                <span className="text-sm">Persona habilitada</span>
               </label>
             </div>
 

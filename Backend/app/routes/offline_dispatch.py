@@ -257,7 +257,8 @@ async def sync(request: Request, background_tasks: BackgroundTasks):
                 ON CONFLICT(offline_id) DO UPDATE SET
                  offline_revision=excluded.offline_revision,offline_meta=excluded.offline_meta,
                  ended_at=excluded.ended_at,liters=excluded.liters,flow_l_min=excluded.flow_l_min,
-                 company_id=excluded.company_id,pin_user_id=excluded.pin_user_id,
+                 company_id=CASE WHEN water_dispatch.ai_vehicle_analysis ? 'company_validation'
+                    THEN water_dispatch.company_id ELSE excluded.company_id END,pin_user_id=excluded.pin_user_id,
                  access_method=excluded.access_method,photo_path=excluded.photo_path,
                  photo_paths=excluded.photo_paths,note=excluded.note RETURNING id''',
                 (r.local_id,r.revision,Jsonb(meta),r.station_id,r.started_at,r.ended_at,liters,flow,

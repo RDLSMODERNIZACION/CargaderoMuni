@@ -21,6 +21,7 @@ from app.auth import (
 from app.db import pool
 from app.services.hik_sync import resolve_driver
 from app.services.vehicle_ai import analyze_dispatch_vehicle
+from app.services.dispatch_roles import dispatch_parties
 
 router = APIRouter()
 
@@ -458,11 +459,12 @@ async def recent(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                    wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
+                    wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta, wd.person_role, pc.name AS person_company_name
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c
                     ON c.id = wd.company_id
                 LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
+                LEFT JOIN public.company pc ON pc.id=p.company_id
                 {where_sql}
                 ORDER BY wd.ts DESC
                 LIMIT %s
@@ -496,6 +498,7 @@ async def recent(
                 "ended_at": r[15].isoformat() if r[15] else None,
                 "timing": dispatch_timing(r[16]),
                 "identity": dispatch_identity(r[16]),
+                **dispatch_parties(r[17], r[9], r[10], r[11], r[18], r[8]),
             }
         )
 
@@ -536,10 +539,11 @@ async def get_dispatch(
                     c.id AS company_id,
                     c.name AS company_name,
                     c.code AS company_code,
-                        wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta
+                        wd.pin_user_id, p.name AS driver_name, wd.access_method, wd.ended_at, wd.offline_meta, wd.person_role, pc.name AS person_company_name
                 FROM public.water_dispatch wd
                 LEFT JOIN public.company c ON c.id = wd.company_id
                     LEFT JOIN public.pin_user p ON p.id = wd.pin_user_id
+                LEFT JOIN public.company pc ON pc.id=p.company_id
                 LEFT JOIN public.station s ON s.id = wd.station_id
                 WHERE wd.id = %s
                 """,
@@ -580,6 +584,7 @@ async def get_dispatch(
             "ended_at": r[21].isoformat() if r[21] else None,
             "timing": dispatch_timing(r[22]),
             "identity": dispatch_identity(r[22]),
+            **dispatch_parties(r[23], r[15], r[16], r[17], r[24], r[9]),
         },
     }
 
@@ -726,6 +731,13 @@ async def update_dispatch_admin(
                 )
                 if not await cur.fetchone():
                     raise HTTPException(status_code=404, detail="company not found")
+                await cur.execute("SELECT name FROM public.company WHERE id=%s", (payload["company_id"],))
+                selected_name = (await cur.fetchone())[0]
+                review = {"company_id": payload["company_id"], "company_name": selected_name,
+                          "validated_by": user.id, "validated_at": datetime.now(timezone.utc).isoformat(),
+                          "source": "dispatch_edit"}
+                updates.append("ai_vehicle_analysis = COALESCE(ai_vehicle_analysis, '{}'::jsonb) || %s::jsonb")
+                params.append(Jsonb({"company_validation": review}))
 
             final_station_id = payload.get("station_id", current_station_id)
 
