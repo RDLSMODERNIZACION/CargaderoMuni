@@ -56,7 +56,7 @@ class ReviewDB:
         if self.sql.startswith('SELECT company_id FROM public.vehicle_company'): return (self.existing,) if self.existing else None
         if 'FROM public.vehicle_company pc' in self.sql: return (2, 'Parada', 'AH303IF') if self.mapping_written else None
         if 'JOIN public.station_company_access' in self.sql: return ('Parada',) if self.allowed else None
-        if self.sql.startswith('SELECT c.name'): return ('Parada',)
+        if self.sql.startswith('SELECT c.name'): return ('Parada', 2, None)
         raise AssertionError(self.sql)
     async def fetchall(self): return [(2, 'Parada')]
 
@@ -122,7 +122,7 @@ def test_reanalysis_preserves_human_review_and_returns_saved_result(monkeypatch,
                          'plate_reviews': [{'plate': 'AH303IF'}],
                          'company_validation': {'company_id': 2},
                          'company_reviews': [{'company_id': 2}],
-                         'status': 'ok', 'company_visible': 'PECOM', 'company_confidence': .9}, '2', 'Parada')
+                         'status': 'ok', 'company_visible': 'PECOM', 'company_confidence': .9}, '2', 'Parada', 2, None)
             if 'FROM public.vehicle_company pc' in self.sql: return (2, 'Parada', 'AH303IF')
             return await super().fetchone()
     db = AnalysisDB(); monkeypatch.setattr(service, 'pool', db)
