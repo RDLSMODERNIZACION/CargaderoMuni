@@ -33,3 +33,18 @@ def test_historical_false_alert_is_filtered_on_read():
     result=dispatch_parties('loading_staff',2,'Parada','PAR','Municipalidad',old)
     assert result['ai_vehicle_analysis']['company_visible'] is None
     assert result['ai_vehicle_analysis']['company_alert'] is False
+
+
+@pytest.mark.parametrize('label', ['Servicios Públicos', 'SERVICIOS PUBLICOS', ' servicios   públicos ', 'Ecotrosa', 'ECOTROSA', 'Econovo'])
+def test_user_excluded_labels_never_suggest_or_alert(label):
+    result = company_check({'company_visible': label, 'company_confidence': .99}, ASSOCIATION)
+    assert result['company_suggested'] is None
+    assert result['company_alert'] is False
+    assert result['company_visible_raw'] == label.strip()
+    assert result['plate_company'] == ASSOCIATION
+
+
+def test_full_municipal_name_is_not_a_generic_department_label():
+    name = 'Municipalidad de Rincón de los Sauces / Obras y Servicios Públicos'
+    result = company_check({'company_visible': name, 'company_confidence': .9})
+    assert result['company_suggested'] == name

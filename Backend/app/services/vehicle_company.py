@@ -43,14 +43,20 @@ def manufacturer_only(value, detected_manufacturer=None):
     return False
 
 
+# User-defined exclusions: these labels are not recipient companies.
+EXCLUDED_COMPANY_LABELS = {"SERVICIOSPUBLICOS", "ECOTROSA"}
+
+
 def company_check(analysis, association=None, expected_company=None):
     result = dict(analysis)
     visible = (analysis.get('company_visible') or '').strip()
     confidence = float(analysis.get('company_confidence') or 0)
-    if manufacturer_only(visible, analysis.get('vehicle_manufacturer')):
+    exclusion = ('non_company_label' if company_key(visible) in EXCLUDED_COMPANY_LABELS
+                 else 'vehicle_manufacturer' if manufacturer_only(visible, analysis.get('vehicle_manufacturer')) else None)
+    if exclusion:
         result['company_visible_raw'] = visible
         result['company_confidence_raw'] = confidence
-        result['company_exclusion_reason'] = 'vehicle_manufacturer'
+        result['company_exclusion_reason'] = exclusion
         result['company_visible'] = None
         result['company_confidence'] = 0
         visible = ''

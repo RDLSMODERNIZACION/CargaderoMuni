@@ -29,7 +29,7 @@ export default function VehicleCompanyEvidence({analysis, expected}: {
     <div className="text-xs text-slate-500">Empresa sugerida por IA</div>
     <div className="mt-1 font-semibold">{suggested || "Sin identificar"}</div>
     <p className={`mt-2 text-sm ${mismatch ? "text-red-700 font-medium" : "text-slate-600"}`} role={mismatch ? "alert" : undefined}>{label}</p>
-    {analysis.company_exclusion_reason === "vehicle_manufacturer" && <p className="mt-1 text-sm text-slate-600">Se detectó una marca de camión, no una empresa transportista.</p>}
+    {analysis.company_exclusion_reason && <p className="mt-1 text-sm text-slate-600">El texto detectado está excluido como empresa sugerida.</p>}
     {reference && <p className="mt-1 text-sm">Empresa de referencia: {reference}</p>}
     {!!analysis.visible_text?.length && <p className="mt-2 text-xs text-slate-500">Texto observado: {analysis.visible_text.join(" · ")}</p>}
     <p className="mt-2 text-xs text-slate-500">Sugerencia basada en logos o textos de las fotos. Requiere revisión; no modifica la asociación guardada.</p>
